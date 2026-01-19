@@ -1,0 +1,653 @@
+# Claude Code Session Management Internals
+
+## Overview
+
+This rule provides essential knowledge about Claude Code's session storage architecture, JSONL format, and analysis patterns. Use this when working with Claude Code session files, building parsers, or implementing session viewers.
+
+## Storage Architecture
+
+### Global Storage Location
+
+All Claude Code sessions are stored in:
+```
+~/.claude/projects/[encoded-directory-paths]/[session-uuid].jsonl
+```
+
+**Path Encoding**: Directory paths are encoded by replacing `/` with `-`:
+- `/Users/stefan/Code/project` → `-Users-stefan-Code-project`
+- `/home/user/projects/myapp` → `-home-user-projects-myapp`
+
+### Project Structure
+```
+~/.claude/
+├── projects/                          # All conversation histories
+│   └── [encoded-directory-paths]/     # One folder per project path
+│       ├── [session-uuid].jsonl       # Full conversation history
+│       ├── [summary-uuid].jsonl       # Auto-generated summaries
+│       ├── sessions-index.json        # Session metadata (LARGE FILE!)
+│       └── [session-uuid]/            # Sub-agent sessions
+│           └── subagents/
+│               └── agent-[id].jsonl   # Sub-agent conversation
+├── settings.json                      # Global user preferences
+├── agents/                            # User-level custom subagents
+└── commands/                          # User-level slash commands
+```
+
+### Project-Level Configuration
+```
+project-root/
+├── .claude/
+│   ├── settings.json           # Project settings (version controlled)
+│   ├── settings.local.json     # Local overrides (gitignored)
+│   ├── commands/               # Project-specific slash commands
+│   └── agents/                 # Project-specific subagent definitions
+├── CLAUDE.md                   # Project memory/context (auto-loaded)
+└── CLAUDE.local.md             # Personal project context (gitignored)
+```
+
+## JSONL Message Format
+
+### Base Message Structure
+
+Every line in a `.jsonl` file is a complete JSON object:
+
+```json
+{
+  "parentUuid": "abc123-def456" | null,
+  "isSidechain": false,
+  "userType": "external",
+  "cwd": "/absolute/path/to/project",
+  "sessionId": "797df13f-41e5-4ccd-9f00-d6f6b9bee0b3",
+  "version": "1.0.38",
+  "type": "user" | "assistant" | "summary",
+  "gitBranch": "main",
+  "message": { /* see below */ },
+  "uuid": "d02cab21-cc42-407e-80cb-6305ac542803",
+  "timestamp": "2025-01-18T14:32:00.323Z",
+  "toolUseResult": { /* optional */ }
+}
+```
+
+### Message Types
+
+#### 1. User Message
+```json
+{
+  "type": "user",
+  "message": {
+    "role": "user",
+    "content": "Help me refactor the authentication module"
+  }
+}
+```
+
+Or with structured content:
+```json
+{
+  "type": "user",
+  "message": {
+    "role": "user",
+    "content": [
+      { "type": "text", "text": "What's in this file?" },
+      { 
+        "type": "tool_result", 
+        "tool_use_id": "toolu_xxx", 
+        "content": "file contents...",
+        "is_error": false
+      }
+    ]
+  }
+}
+```
+
+#### 2. Assistant Message
+```json
+{
+  "type": "assistant",
+  "message": {
+    "id": "msg_01SS3c1HZmneNCpZf5WazgHq",
+    "type": "message",
+    "role": "assistant",
+    "model": "claude-sonnet-4-20250514",
+    "content": [
+      { "type": "text", "text": "I'll help you refactor..." },
+      { 
+        "type": "tool_use", 
+        "id": "toolu_01ABC123",
+        "name": "Read",
+        "input": { "file_path": "src/auth/session.js" }
+      }
+    ],
+    "usage": {
+      "input_tokens": 15234,
+      "output_tokens": 847,
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 12000
+    },
+    "stop_reason": "tool_use" | "end_turn" | "max_tokens"
+  }
+}
+```
+
+### Content Block Types
+
+| Type | Location | Description |
+|------|----------|-------------|
+| `text` | Both | Plain text content |
+| `tool_use` | Assistant | Tool invocation request |
+| `tool_result` | User | Response to a tool invocation |
+| `thinking` | Assistant | Extended thinking content (when enabled) |
+| `image` | User | Base64-encoded image |
+
+### Tool Use Block
+```json
+{
+  "type": "tool_use",
+  "id": "toolu_01XYZ789",
+  "name": "Bash",
+  "input": {
+    "command": "npm test -- --grep 'auth'",
+    "timeout": 30000
+  }
+}
+```
+
+### Tool Result Block
+```json
+{
+  "type": "tool_result",
+  "tool_use_id": "toolu_01XYZ789",
+  "content": "✓ 12 tests passed\n✓ 0 tests failed",
+  "is_error": false
+}
+```
+
+### Thinking Block
+```json
+{
+  "type": "thinking",
+  "thinking": "I need to analyze the current auth implementation before suggesting changes. Should check: session management, user model, middleware, and routes.",
+  "signature": "abc123def456"
+}
+```
+
+## Built-in Tools
+
+| Tool | Description | Example Input |
+|------|-------------|---------------|
+| `Read` | Read file contents | `{ "file_path": "src/index.js" }` |
+| `Write` | Create/overwrite file | `{ "file_path": "...", "content": "..." }` |
+| `Edit` | Surgical file edit | `{ "file_path": "...", "old_string": "...", "new_string": "..." }` |
+| `Bash` | Execute shell command | `{ "command": "npm install", "timeout": 60000 }` |
+| `Glob` | Find files by pattern | `{ "pattern": "**/*.ts" }` |
+| `Grep` | Search file contents | `{ "pattern": "TODO", "path": "src/" }` |
+| `LS` | List directory contents | `{ "path": "src/components" }` |
+| `Task` | Spawn subagent | `{ "description": "...", "prompt": "..." }` |
+| `WebSearch` | Search the web | `{ "query": "React 19 features" }` |
+
+## Sub-Agent Architecture
+
+### What Are Sub-Agents?
+
+Sub-agents are isolated Claude instances spawned via the `Task` tool. They operate in their own context window and return summarized results to the main agent.
+
+### Built-in Sub-Agent Types
+
+| Type | Purpose | Available Tools | Context |
+|------|---------|-----------------|---------|
+| `general-purpose` | Full capability tasks | All tools | Inherits parent context |
+| `Explore` | Read-only codebase search | Glob, Grep, Read, limited Bash | Fresh context |
+| `Plan` | Architecture planning | Research-focused tools | Inherits parent context |
+
+### Task Tool Invocation
+```json
+{
+  "type": "tool_use",
+  "id": "toolu_task_001",
+  "name": "Task",
+  "input": {
+    "description": "Research authentication patterns in the codebase",
+    "subagent_type": "general-purpose",
+    "prompt": "Find all files related to authentication and summarize the current approach",
+    "allowed_tools": ["Read", "Grep", "Glob"]
+  }
+}
+```
+
+### Sub-Agent Detection Pattern
+
+**CRITICAL**: Sub-agent delegations are detected by finding `agentId:` in tool result content.
+
+```regex
+agentId:\s*([a-zA-Z0-9]+)
+```
+
+When found:
+1. Extract the agent ID
+2. Locate sub-agent file: `<session-id>/subagents/agent-<agent-id>.jsonl`
+3. Process sub-agent events recursively with increased nesting depth
+4. Display in chronological order
+
+### Key Constraints
+
+- **No nested spawning**: Sub-agents cannot spawn other sub-agents
+- **Single-level hierarchy**: All sub-agents report directly to main agent
+- **Context isolation**: Sub-agent work doesn't pollute main context
+- **Parallel execution**: Multiple sub-agents can run simultaneously (up to 7)
+
+## Message Threading & Hierarchy
+
+Messages form a tree structure via `parentUuid`:
+
+```
+msg-1 (user: "Help me refactor auth")
+  └── msg-2 (assistant: "I'll analyze first...")
+        ├── msg-3 (tool_use: Read)
+        ├── msg-4 (tool_use: Read)
+        └── msg-5 (assistant: "Here's my plan...")
+              └── msg-6 (user: "Yes, proceed")
+                    └── msg-7 (assistant: starts implementation)
+                          ├── subagent-1 (Task: Code Writer)
+                          │     ├── tool-a (Write)
+                          │     └── tool-b (Write)
+                          └── subagent-2 (Task: Test Writer)
+                                ├── tool-c (Write)
+                                └── tool-d (Bash: run tests)
+```
+
+## sessions-index.json Handling
+
+**CRITICAL**: The `sessions-index.json` file can exceed 25,000 tokens and **must not be read directly** with the Read tool.
+
+### Correct Approaches
+
+**Option 1: Use jq (Preferred)**
+```bash
+# Get recent sessions with context
+jq -r '.entries | sort_by(.fileMtime) | reverse | limit(15;.[]) | 
+  "\(.modified) | \(.sessionId) | \(.firstPrompt[:80])"' \
+  ~/.claude/projects/<project-name>/sessions-index.json
+
+# Get specific session by ID
+jq -r '.entries[] | select(.sessionId == "<session-id>")' \
+  ~/.claude/projects/<project-name>/sessions-index.json
+```
+
+**Option 2: Use grep**
+```bash
+grep -A 5 '"sessionId": "abc123"' sessions-index.json
+```
+
+**Option 3: Fallback to directory listing**
+```bash
+ls -lt ~/.claude/projects/<project-name>/*.jsonl | head -20
+```
+
+**Never** try to load the entire sessions-index.json into memory via Read tool.
+
+## CLAUDE.md Memory System
+
+### File Discovery
+
+Claude Code recursively searches for memory files from `cwd` up to (but not including) root:
+
+```
+/home/user/projects/myapp/src/  ← cwd
+/home/user/projects/myapp/CLAUDE.md  ← loaded
+/home/user/projects/CLAUDE.md  ← loaded
+/home/user/CLAUDE.md  ← loaded
+~/.claude/CLAUDE.md  ← loaded (user-level)
+```
+
+### File Types
+
+| File | Scope | Git Status |
+|------|-------|------------|
+| `CLAUDE.md` | Shared with team | Tracked |
+| `CLAUDE.local.md` | Personal only | Auto-gitignored |
+| `.claude/CLAUDE.md` | Alternative location | Tracked |
+
+### Import Syntax
+
+CLAUDE.md files can import other files:
+
+```markdown
+# Project Context
+
+See @README.md for project overview.
+See @docs/architecture.md for system design.
+See @package.json for available scripts.
+```
+
+### Conditional Rules
+
+Rules can be scoped to specific file patterns:
+
+```markdown
+---
+paths:
+  - "src/api/**/*.ts"
+---
+
+# API Development Rules
+
+- All endpoints must include input validation
+- Use standard error response format
+- Include OpenAPI documentation comments
+```
+
+## Analysis Tools & Commands
+
+### Quick Analysis Commands
+
+```bash
+# List all project histories
+ls -la ~/.claude/projects/
+
+# Find history for current directory
+ENCODED=$(pwd | sed 's/\//-/g')
+ls -la ~/.claude/projects/$ENCODED/
+
+# Count messages in a session
+wc -l ~/.claude/projects/$ENCODED/*.jsonl
+
+# Extract all user messages
+grep '"type":"user"' ~/.claude/projects/$ENCODED/*.jsonl | jq -r '.message.content'
+
+# Find sessions by date
+find ~/.claude/projects/ -name "*.jsonl" -mtime -7
+
+# Validate JSONL files
+for file in ~/.claude/projects/*/*.jsonl; do
+  jq empty "$file" 2>/dev/null || echo "Invalid: $file"
+done
+```
+
+### Prevent Auto-Deletion
+
+By default, Claude Code deletes sessions after 30 days. To extend:
+
+```json
+// ~/.claude/settings.json
+{
+  "sessionRetentionDays": 100000
+}
+```
+
+## Parsing Best Practices
+
+### 1. Safe JSON Parsing
+
+Always skip malformed lines, don't fail entire session:
+
+```python
+def load_events_safely(session_file):
+    events = []
+    errors = []
+    
+    with open(session_file, 'r') as f:
+        for line_num, line in enumerate(f, 1):
+            line = line.strip()
+            if not line:
+                continue
+            
+            try:
+                event = json.loads(line)
+                events.append(event)
+            except json.JSONDecodeError as e:
+                errors.append({"line": line_num, "error": str(e)})
+    
+    if errors:
+        print(f"⚠️  Skipped {len(errors)} malformed lines")
+    
+    return events, errors
+```
+
+### 2. Content Extraction
+
+Handle both string and array content:
+
+```python
+def extract_text_content(content_items):
+    """Extract all text from content array or string."""
+    if isinstance(content_items, str):
+        return content_items
+    
+    texts = []
+    for item in content_items:
+        if isinstance(item, dict):
+            if item.get('type') == 'text':
+                texts.append(item.get('text', ''))
+            elif item.get('type') == 'thinking':
+                texts.append(f"[Thinking: {item.get('thinking', '')}]")
+    
+    return '\n\n'.join(texts)
+```
+
+### 3. Sub-Agent Detection
+
+```python
+import re
+
+def detect_agent_id(content):
+    """Detect agent ID in tool result content."""
+    if isinstance(content, str):
+        match = re.search(r"agentId:\s*([a-zA-Z0-9]+)", content)
+        return match.group(1) if match else None
+    
+    if isinstance(content, list):
+        for item in content:
+            if isinstance(item, dict) and item.get('type') == 'text':
+                match = re.search(r"agentId:\s*([a-zA-Z0-9]+)", item.get('text', ''))
+                if match:
+                    return match.group(1)
+    
+    return None
+```
+
+### 4. Timestamp Formatting
+
+```python
+from datetime import datetime
+
+def format_timestamp(ts_str):
+    """Parse ISO 8601 timestamp and format for display."""
+    if not ts_str:
+        return "Unknown time"
+    
+    try:
+        dt = datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
+        return dt.strftime('%Y-%m-%d %H:%M:%S')
+    except ValueError:
+        return ts_str  # Return as-is if parsing fails
+```
+
+## Tool Execution Flow
+
+```
+User Request
+    ↓
+Assistant generates tool_use block
+    ↓
+Claude Code executes tool locally
+    ↓
+Result wrapped in tool_result block
+    ↓
+Sent back as part of next user message
+    ↓
+Assistant continues with result context
+```
+
+## Common Patterns
+
+### Pattern 1: Pairing Tool Use with Results
+
+**JSONL**: Sequential events
+```jsonl
+{"type": "assistant", "message": {"content": [
+  {"type": "tool_use", "id": "toolu_xyz", "name": "Read", "input": {"path": "file.txt"}}
+]}}
+{"type": "user", "message": {"content": [
+  {"type": "tool_result", "tool_use_id": "toolu_xyz", "content": "file contents...", "is_error": false}
+]}}
+```
+
+**Transformation**: Match by `tool_use_id`
+1. Extract tool_use from assistant content → create tool_call node
+2. Find matching tool_result by tool_use_id → populate output/status
+3. Calculate duration: `result_timestamp - use_timestamp`
+
+### Pattern 2: Thinking Extraction
+
+**JSONL**: Thinking as content item
+```json
+{"type": "assistant", "message": {"content": [
+  {"type": "thinking", "thinking": "reasoning text...", "signature": "abc123"},
+  {"type": "text", "text": "response text..."}
+]}}
+```
+
+**Transformation**: Extract thinking from content array, attach as top-level property.
+
+### Pattern 3: Error Recovery
+
+Tool calls can have children when recovery is attempted:
+
+```json
+{
+  "id": "tool-6",
+  "type": "tool_call",
+  "name": "bash",
+  "status": "error",
+  "error": "Missing dependency: jsonwebtoken",
+  "children": [
+    {
+      "id": "tool-7",
+      "type": "tool_call",
+      "name": "bash",
+      "status": "success",
+      "input": {"command": "npm install jsonwebtoken"},
+      "output": "added 1 package"
+    }
+  ]
+}
+```
+
+## Reference Implementation: clog HTML Viewer
+
+The `references/REFERENCE-IMPLEMENTATION-clog.html` file provides a complete working example of:
+
+1. **File System Access API** usage for browsing Claude projects
+2. **JSONL parsing** with error handling
+3. **Session grouping** and metadata extraction
+4. **Token usage tracking** (input, output, cache creation, cache read)
+5. **Real-time file monitoring** with auto-reload
+6. **Auto-scroll** to latest messages
+7. **Hierarchical message threading** using `parentUuid`
+8. **Tool use/result rendering** with color coding
+9. **Session metadata display** (version, git branch, working directory)
+
+Key features to reference:
+- Cross-platform path detection (Windows/Mac/Linux)
+- File modification tracking for live updates
+- Graceful handling of malformed JSON lines
+- Session duration calculation
+- Token usage aggregation
+- Tool result special formatting (e.g., TodoWrite)
+
+## Common Pitfalls
+
+### ❌ Don't Do This
+
+1. **Don't read sessions-index.json with Read tool** - Use jq/grep/Shell commands
+2. **Don't load entire session into memory** - Use streaming for large sessions
+3. **Don't assume content is always an array** - Can be string or array
+4. **Don't fail on malformed lines** - Skip and continue
+5. **Don't forget sub-agent recursion limits** - Max depth 10
+
+### ✅ Do This
+
+1. **Use jq for sessions-index.json queries** - Fast and efficient
+2. **Stream events for large sessions** - Generator patterns
+3. **Handle both string and array content** - Type check first
+4. **Skip malformed lines gracefully** - Log warnings, continue
+5. **Limit sub-agent recursion depth** - Prevent infinite loops
+
+## TypeScript Schema Reference
+
+```typescript
+interface ClaudeCodeMessage {
+  parentUuid: string | null;
+  isSidechain: boolean;
+  userType: 'external' | 'internal';
+  cwd: string;
+  sessionId: string;
+  version: string;
+  type: 'user' | 'assistant' | 'summary';
+  gitBranch?: string;
+  message: MessageContent;
+  uuid: string;
+  timestamp: string;
+  toolUseResult?: Record<string, unknown>;
+}
+
+interface MessageContent {
+  id?: string;
+  type?: 'message';
+  role: 'user' | 'assistant';
+  model?: string;
+  content: string | ContentBlock[];
+  usage?: TokenUsage;
+  stop_reason?: 'tool_use' | 'end_turn' | 'max_tokens';
+}
+
+type ContentBlock = 
+  | TextBlock 
+  | ToolUseBlock 
+  | ToolResultBlock 
+  | ThinkingBlock;
+
+interface TextBlock {
+  type: 'text';
+  text: string;
+}
+
+interface ToolUseBlock {
+  type: 'tool_use';
+  id: string;
+  name: string;
+  input: Record<string, unknown>;
+}
+
+interface ToolResultBlock {
+  type: 'tool_result';
+  tool_use_id: string;
+  content: string | ContentBlock[];
+  is_error?: boolean;
+}
+
+interface ThinkingBlock {
+  type: 'thinking';
+  thinking: string;
+  signature?: string;
+}
+
+interface TokenUsage {
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_input_tokens: number;
+  cache_read_input_tokens: number;
+}
+```
+
+## References
+
+- [Claude Code Official Docs - Memory](https://code.claude.com/docs/en/memory)
+- [Claude Code Official Docs - Settings](https://code.claude.com/docs/en/settings)
+- [Claude Code Official Docs - Subagents](https://code.claude.com/docs/en/sub-agents)
+- [Claude Agent SDK - Sessions](https://platform.claude.com/docs/en/agent-sdk/sessions)
+- [DeepWiki - Session Management](https://deepwiki.com/anthropics-claude/claude-code/2.3-session-management)
+
+---
+
+*This rule synthesizes information from `references/claude-code-session-management.md` and `references/REFERENCE-IMPLEMENTATION-clog.html`*

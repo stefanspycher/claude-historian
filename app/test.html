@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Module Test</title>
+</head>
+<body>
+  <h1>Module Test</h1>
+  <div id="test-results"></div>
+  
+  <script type="module">
+    import { EventBus } from './js/core/EventBus.js';
+    import { StateManager } from './js/core/StateManager.js';
+    import { SessionParser } from './js/data/SessionParser.js';
+    import { TreeTransformer } from './js/data/TreeTransformer.js';
+    import { NodeFactory } from './js/data/NodeFactory.js';
+
+    const results = document.getElementById('test-results');
+    
+    function test(name, fn) {
+      try {
+        fn();
+        results.innerHTML += `<p style="color: green;">✓ ${name}</p>`;
+      } catch (error) {
+        results.innerHTML += `<p style="color: red;">✗ ${name}: ${error.message}</p>`;
+      }
+    }
+
+    // Test EventBus
+    test('EventBus: emit and receive', () => {
+      const bus = new EventBus();
+      let received = false;
+      bus.on('test', () => received = true);
+      bus.emit('test');
+      if (!received) throw new Error('Event not received');
+    });
+
+    // Test StateManager
+    test('StateManager: get and set', () => {
+      const state = new StateManager({ test: { value: 1 } });
+      if (state.get('test.value') !== 1) throw new Error('Get failed');
+      state.set('test.value', 2);
+      if (state.get('test.value') !== 2) throw new Error('Set failed');
+    });
+
+    // Test SessionParser
+    test('SessionParser: parse user event', () => {
+      const parser = new SessionParser();
+      const events = [{
+        type: 'user',
+        timestamp: '2026-01-18T10:00:00Z',
+        message: {
+          content: [{ type: 'text', text: 'Hello' }]
+        }
+      }];
+      const result = parser.parseEvents(events);
+      if (result[0].type !== 'user') throw new Error('Type mismatch');
+      if (result[0].textContent[0] !== 'Hello') throw new Error('Content mismatch');
+    });
+
+    // Test TreeTransformer
+    test('TreeTransformer: build tree', () => {
+      const transformer = new TreeTransformer();
+      const parsed = [{
+        type: 'user',
+        timestamp: '2026-01-18T10:00:00Z',
+        textContent: ['Hello'],
+        toolResults: []
+      }];
+      const tree = transformer.transform(parsed, { sessionId: 'test' });
+      if (!tree.rootMessages) throw new Error('No root messages');
+      if (tree.rootMessages.length !== 1) throw new Error('Wrong count');
+    });
+
+    // Test NodeFactory
+    test('NodeFactory: create nodes', () => {
+      const factory = new NodeFactory();
+      const user = factory.createUserNode({ 
+        id: 'test', 
+        timestamp: '2026-01-18T10:00:00Z', 
+        content: 'Test' 
+      });
+      if (user.type !== 'user') throw new Error('Wrong type');
+      if (user.content !== 'Test') throw new Error('Wrong content');
+    });
+
+    results.innerHTML += '<p style="margin-top: 20px; font-weight: bold;">All core modules loaded successfully!</p>';
+  </script>
+</body>
+</html>

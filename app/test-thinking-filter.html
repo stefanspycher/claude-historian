@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Thinking Filter Test</title>
+  <style>
+    body { font-family: system-ui; padding: 20px; }
+    .test { margin: 10px 0; padding: 10px; border-radius: 4px; }
+    .pass { background: #d4edda; color: #155724; }
+    .fail { background: #f8d7da; color: #721c24; }
+  </style>
+</head>
+<body>
+  <h1>Thinking Filter Test</h1>
+  <div id="results"></div>
+  
+  <script type="module">
+    // Mock the filter logic
+    function filterNodes(nodes, showThinking, filterType = 'all', searchQuery = '') {
+      return nodes.filter(node => {
+        // Type filter
+        if (filterType !== 'all' && node.type !== filterType) {
+          return false;
+        }
+
+        // Thinking filter - hide assistant nodes with thinking blocks
+        if (!showThinking && node.type === 'assistant' && node.thinking) {
+          return false;
+        }
+
+        // Search filter
+        if (searchQuery) {
+          const query = searchQuery.toLowerCase();
+          const searchText = [
+            node.content,
+            node.task,
+            node.name,
+            node.output,
+            JSON.stringify(node.input)
+          ].join(' ').toLowerCase();
+          
+          if (!searchText.includes(query)) {
+            return false;
+          }
+        }
+
+        return true;
+      });
+    }
+
+    // Test data
+    const testNodes = [
+      { id: '1', type: 'user', content: 'Hello' },
+      { id: '2', type: 'assistant', content: 'Response', thinking: 'Internal reasoning' },
+      { id: '3', type: 'assistant', content: 'Another response' },
+      { id: '4', type: 'tool_call', name: 'Read', input: { path: 'file.js' } },
+      { id: '5', type: 'assistant', content: 'Final response', thinking: 'More thinking' },
+    ];
+
+    // Run tests
+    const results = document.getElementById('results');
+
+    function test(name, condition) {
+      const div = document.createElement('div');
+      div.className = `test ${condition ? 'pass' : 'fail'}`;
+      div.textContent = `${condition ? '✓' : '✗'} ${name}`;
+      results.appendChild(div);
+      return condition;
+    }
+
+    // Test 1: With showThinking=true, all nodes visible
+    const allVisible = filterNodes(testNodes, true);
+    test('showThinking=true: All 5 nodes visible', allVisible.length === 5);
+
+    // Test 2: With showThinking=false, assistant nodes with thinking hidden
+    const thinkingHidden = filterNodes(testNodes, false);
+    test('showThinking=false: Only 3 nodes visible (user, assistant without thinking, tool)', thinkingHidden.length === 3);
+
+    // Test 3: Verify correct nodes are hidden
+    const hiddenIds = thinkingHidden.map(n => n.id);
+    test('Correct nodes visible: 1, 3, 4', 
+      hiddenIds.includes('1') && hiddenIds.includes('3') && hiddenIds.includes('4'));
+    test('Thinking nodes hidden: 2, 5 not visible', 
+      !hiddenIds.includes('2') && !hiddenIds.includes('5'));
+
+    // Test 4: Assistant without thinking still visible
+    const assistantNoThinking = thinkingHidden.find(n => n.id === '3');
+    test('Assistant without thinking visible', assistantNoThinking !== undefined);
+
+    // Test 5: Combination with type filter
+    const assistantOnly = filterNodes(testNodes, false, 'assistant');
+    test('Type filter + thinking filter: Only assistant without thinking', 
+      assistantOnly.length === 1 && assistantOnly[0].id === '3');
+
+    // Test 6: User and tool nodes unaffected
+    const userNodes = filterNodes(testNodes, false, 'user');
+    const toolNodes = filterNodes(testNodes, false, 'tool_call');
+    test('User nodes unaffected by thinking filter', userNodes.length === 1);
+    test('Tool nodes unaffected by thinking filter', toolNodes.length === 1);
+
+    // Summary
+    const allTests = document.querySelectorAll('.test');
+    const passed = document.querySelectorAll('.test.pass').length;
+    const total = allTests.length;
+    
+    const summary = document.createElement('div');
+    summary.style.marginTop = '20px';
+    summary.style.fontWeight = 'bold';
+    summary.style.fontSize = '18px';
+    summary.textContent = `${passed}/${total} tests passed`;
+    summary.style.color = passed === total ? '#155724' : '#721c24';
+    results.appendChild(summary);
+
+    if (passed === total) {
+      console.log('✓ All thinking filter tests passed!');
+    } else {
+      console.error(`✗ ${total - passed} test(s) failed`);
+    }
+  </script>
+</body>
+</html>

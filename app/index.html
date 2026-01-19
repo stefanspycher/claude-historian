@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Claude Session Viewer</title>
+  
+  <link rel="stylesheet" href="css/reset.css">
+  <link rel="stylesheet" href="css/variables.css">
+  <link rel="stylesheet" href="css/typography.css">
+  <link rel="stylesheet" href="css/layout.css">
+  <link rel="stylesheet" href="css/components.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Loading Spinner -->
+    <div id="loading-spinner" class="loading-overlay" style="display: none;">
+      <div class="spinner"></div>
+    </div>
+
+    <!-- Session Selector (shown initially) -->
+    <div id="session-selector" class="session-selector">
+      <div class="selector-container">
+        <h1>Claude Session Viewer</h1>
+        <p class="subtitle">Browse and visualize your Claude Code sessions</p>
+        
+        <div class="recent-sessions">
+          <h2>Recent Sessions</h2>
+          <ul id="recent-list"></ul>
+        </div>
+        
+        <div class="project-browser">
+          <h2>Browse Projects</h2>
+          <select id="project-select">
+            <option value="">Select a project...</option>
+          </select>
+          
+          <div id="session-list" class="session-list"></div>
+        </div>
+        
+        <button id="load-session-btn" class="btn-primary">Load Session</button>
+      </div>
+    </div>
+
+    <!-- Session Viewer (shown after loading) -->
+    <div id="session-viewer" class="session-viewer" style="display: none;">
+      <!-- Header -->
+      <header class="viewer-header">
+        <div class="header-left">
+          <button id="back-btn" class="btn-back">← Back</button>
+          <div class="logo">
+            <span>Session Trace</span>
+          </div>
+          <div class="session-info">
+            <span id="session-id" class="session-id"></span>
+            <span id="session-model" class="session-model"></span>
+            <span id="session-time" class="session-time"></span>
+          </div>
+        </div>
+        <div class="header-right">
+          <div class="search-box">
+            <span class="search-icon">🔍</span>
+            <input id="search-input" type="text" placeholder="Search nodes...">
+          </div>
+          <button id="export-btn" class="btn-secondary">Export</button>
+        </div>
+      </header>
+
+      <!-- Stats Bar -->
+      <div id="stats-bar" class="stats-bar"></div>
+
+      <!-- Toolbar -->
+      <div class="toolbar">
+        <div class="filter-group">
+          <label>Filter:</label>
+          <select id="filter-type">
+            <option value="all">All Types</option>
+            <option value="user">User</option>
+            <option value="assistant">Assistant</option>
+            <option value="tool_call">Tool Calls</option>
+            <option value="subagent">Sub-agents</option>
+          </select>
+        </div>
+        <div class="toolbar-actions">
+          <button id="toggle-thinking" class="active">👁️ Thinking</button>
+          <button id="expand-all">Expand All</button>
+          <button id="collapse-all">Collapse All</button>
+        </div>
+      </div>
+
+      <!-- Main Content -->
+      <div class="main-content">
+        <div id="tree-panel" class="tree-panel">
+          <div id="tree-scroll" class="tree-scroll"></div>
+        </div>
+        <div id="detail-panel" class="detail-panel"></div>
+      </div>
+    </div>
+
+    <!-- Session Files Modal -->
+    <div id="session-files-modal" class="modal-overlay" style="display: none;"></div>
+  </div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

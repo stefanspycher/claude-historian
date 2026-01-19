@@ -1,0 +1,43 @@
+/* css/variables.css */
+
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
+
+:root {
+  /* Colors */
+  --bg-primary: #0a0a0b;
+  --bg-secondary: #0f0f10;
+  --bg-tertiary: #18181b;
+  
+  --border-primary: #27272a;
+  --border-secondary: #1f1f23;
+  
+  --text-primary: #e4e4e7;
+  --text-secondary: #a1a1aa;
+  --text-tertiary: #71717a;
+  --text-muted: #52525b;
+  --text-faint: #3f3f46;
+  
+  /* Node colors */
+  --color-user: #3B82F6;
+  --color-assistant: #10B981;
+  --color-tool: #F59E0B;
+  --color-subagent: #8B5CF6;
+  
+  /* Status colors */
+  --color-success: #10B981;
+  --color-error: #EF4444;
+  --color-warning: #F59E0B;
+  --color-info: #3B82F6;
+  
+  /* Fonts */
+  --font-mono: 'JetBrains Mono', monospace;
+  --font-sans: 'IBM Plex Sans', -apple-system, sans-serif;
+  
+  /* Spacing */
+  --tree-indent: 24px;
+  
+  /* Transitions */
+  --transition-fast: 0.1s;
+  --transition-normal: 0.15s;
+  --transition-slow: 0.3s;
+}

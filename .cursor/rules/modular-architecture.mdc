@@ -1,0 +1,674 @@
+# Modular Architecture Rules
+
+## Overview
+
+The Claude Session Viewer is built with a **fully modular, event-driven architecture**. This document defines the architectural patterns and rules that must be followed when extending or modifying the application.
+
+## Core Principles
+
+### 1. Single Responsibility Principle
+Each module has ONE clear purpose:
+- ✅ `EventBus.js` - Only pub/sub communication
+- ✅ `SessionParser.js` - Only JSONL parsing
+- ✅ `TreeView.js` - Only tree rendering
+- ❌ Don't create "god modules" that do everything
+
+### 2. Loose Coupling via EventBus
+Modules NEVER call each other directly. All communication via events:
+
+```javascript
+// ❌ BAD: Direct coupling
+import { TreeView } from './components/TreeView.js';
+treeView.selectNode(node);
+
+// ✅ GOOD: Event-based
+import { eventBus } from './core/EventBus.js';
+import { Events } from './config/events.js';
+eventBus.emit(Events.NODE_SELECT, { node });
+```
+
+### 3. Centralized State Management
+All application state lives in `StateManager`. No module-local state for shared data:
+
+```javascript
+// ❌ BAD: Local state
+class MyComponent {
+  constructor() {
+    this.session = null;  // Duplicated state
+  }
+}
+
+// ✅ GOOD: Centralized state
+class MyComponent extends Component {
+  bindEvents() {
+    this.watchState('session', ({ value }) => {
+      this.render(value);
+    });
+  }
+}
+```
+
+### 4. Dependency Injection
+Dependencies are passed in, not hardcoded:
+
+```javascript
+// ❌ BAD: Hardcoded dependencies
+import { apiClient } from './data/APIClient.js';
+class MyModule {
+  loadData() {
+    return apiClient.fetch();  // Tight coupling
+  }
+}
+
+// ✅ GOOD: Injected dependencies
+class MyModule extends Module {
+  constructor(options = {}) {
+    super(options);
+    this.apiClient = options.apiClient;  // Injected
+  }
+  
+  loadData() {
+    return this.apiClient.fetch();
+  }
+}
+```
+
+### 5. Automatic Cleanup
+Base classes handle cleanup automatically:
+
+```javascript
+class MyComponent extends Component {
+  bindEvents() {
+    // Auto-cleanup on destroy()
+    this.subscribe(Events.SOME_EVENT, this.handleEvent);
+    this.watchState('some.path', this.handleState);
+    this.addListener(button, 'click', this.handleClick);
+  }
+  
+  // No need for manual cleanup!
+}
+```
+
+## Module Categories
+
+### Core Infrastructure (`js/core/`)
+
+**Purpose**: Foundation modules that everything else depends on
+
+**Modules**:
+- `EventBus.js` - Pub/sub event system
+- `StateManager.js` - Immutable state management
+- `Component.js` - Base class for UI components
+- `Module.js` - Base class for logic modules
+
+**Rules**:
+- Core modules have NO dependencies (except EventBus → none)
+- Core modules NEVER import from other layers
+- Core modules are NEVER modified unless absolutely necessary
+
+### Configuration (`js/config/`)
+
+**Purpose**: Constants and configuration
+
+**Modules**:
+- `events.js` - Event name constants
+- `constants.js` - App configuration
+- `nodeTypes.js` - Node type definitions
+
+**Rules**:
+- Config modules have NO dependencies
+- Config modules export ONLY constants
+- Use constants, never string literals
+
+### Data Layer (`js/data/`)
+
+**Purpose**: Data fetching, parsing, transformation
+
+**Modules**:
+- `APIClient.js` - HTTP client
+- `SessionParser.js` - JSONL → structured data
+- `TreeTransformer.js` - Flat → hierarchical
+- `SubAgentLoader.js` - Sub-agent loading
+- `NodeFactory.js` - Typed node creation
+
+**Rules**:
+- Data modules extend `Module` base class
+- Data modules NEVER directly manipulate DOM
+- Data modules emit events, don't call UI directly
+- Data modules are pure transformations where possible
+
+### UI Components (`js/components/`)
+
+**Purpose**: Visual components that render DOM
+
+**Modules**:
+- `TreeView/` - Tree visualization
+- `DetailPanel/` - Node details
+- `StatsBar/` - Statistics
+- `Toolbar/` - Controls
+- `common/` - Reusable UI elements
+
+**Rules**:
+- UI components extend `Component` base class
+- UI components NEVER call data layer directly
+- UI components react to state changes
+- UI components emit events for user actions
+- UI components handle their own DOM only
+
+### Feature Modules (`js/features/`)
+
+**Purpose**: Self-contained features
+
+**Modules**:
+- `SessionSelector/` - Session discovery UI
+- `Export/` - Export functionality
+- `Search/` - Search engine
+- `Filters/` - Filtering logic
+
+**Rules**:
+- Features can be components OR modules
+- Features are self-contained (can be removed without breaking app)
+- Features communicate via events only
+
+### Services (`js/services/`)
+
+**Purpose**: Cross-cutting concerns
+
+**Modules**:
+- `StorageService.js` - localStorage wrapper
+- `ConfigService.js` - Configuration management
+- `IconService.js` - Icon management
+
+**Rules**:
+- Services extend `Module` base class
+- Services provide utilities, not business logic
+- Services are singletons (one instance)
+
+### Utilities (`js/utils/`)
+
+**Purpose**: Pure helper functions
+
+**Modules**:
+- `date.js` - Date formatting
+- `dom.js` - DOM helpers
+- `sanitize.js` - XSS prevention
+
+**Rules**:
+- Utils are PURE functions (no side effects)
+- Utils have NO dependencies on other modules
+- Utils don't use EventBus or StateManager
+
+## Communication Patterns
+
+### Pattern 1: User Action → State Update → UI React
+
+```javascript
+// 1. User clicks button
+button.addEventListener('click', () => {
+  // 2. Emit event
+  eventBus.emit(Events.NODE_SELECT, { nodeId: 'msg-1' });
+});
+
+// 3. Handler updates state
+eventBus.on(Events.NODE_SELECT, ({ nodeId }) => {
+  state.set('ui.selectedNodeId', nodeId);
+});
+
+// 4. UI reacts to state change
+class DetailPanel extends Component {
+  bindEvents() {
+    this.watchState('ui.selectedNodeId', ({ value }) => {
+      this.render(value);
+    });
+  }
+}
+```
+
+### Pattern 2: Data Loading
+
+```javascript
+// 1. Request data
+eventBus.emit(Events.SESSION_LOAD, { project, sessionId });
+
+// 2. Fetch from API
+class App {
+  bindEvents() {
+    this.subscribe(Events.SESSION_LOAD, this.loadSession);
+  }
+  
+  async loadSession({ project, sessionId }) {
+    state.set('app.loading', true);
+    
+    try {
+      const data = await this.apiClient.loadSession(project, sessionId);
+      const parsed = this.parser.parseEvents(data.events);
+      const tree = this.transformer.transform(parsed);
+      
+      state.set('session', tree);
+      eventBus.emit(Events.SESSION_LOADED, { session: tree });
+    } catch (error) {
+      eventBus.emit(Events.APP_ERROR, { error });
+    } finally {
+      state.set('app.loading', false);
+    }
+  }
+}
+```
+
+### Pattern 3: Cross-Module Communication
+
+```javascript
+// Module A: Emits event
+class SearchEngine extends Module {
+  search(query) {
+    const results = this.performSearch(query);
+    this.emit(Events.SEARCH_RESULTS, { results });
+  }
+}
+
+// Module B: Receives event
+class TreeView extends Component {
+  bindEvents() {
+    this.subscribe(Events.SEARCH_RESULTS, ({ results }) => {
+      this.highlightResults(results);
+    });
+  }
+}
+```
+
+## File Structure Rules
+
+### Directory Organization
+
+```
+app/
+├── js/
+│   ├── core/           # Foundation (no deps)
+│   ├── config/         # Constants (no deps)
+│   ├── utils/          # Pure functions (no deps)
+│   ├── services/       # Cross-cutting (Module)
+│   ├── data/           # Data layer (Module)
+│   ├── components/     # UI (Component)
+│   │   ├── TreeView/
+│   │   │   └── TreeView.js
+│   │   └── DetailPanel/
+│   │       └── DetailPanel.js
+│   ├── features/       # Features (Component/Module)
+│   │   └── Export/
+│   │       ├── ExportManager.js
+│   │       └── exporters/
+│   │           ├── MarkdownExporter.js
+│   │           └── HTMLExporter.js
+│   └── main.js         # Orchestrator
+├── css/                # Modular stylesheets
+├── server/             # Python backend
+│   ├── routes/         # API handlers
+│   └── utils/          # Backend utilities
+└── index.html          # Entry point
+```
+
+### Naming Conventions
+
+- **Files**: PascalCase matching class name (`SessionParser.js`)
+- **Classes**: PascalCase (`SessionParser`)
+- **Functions**: camelCase (`parseEvents`)
+- **Constants**: UPPER_SNAKE_CASE (`MAX_DEPTH`)
+- **Private**: Underscore prefix (`_internalMethod`)
+- **Events**: namespace:action (`session:loaded`)
+
+### Import Rules
+
+```javascript
+// 1. Core imports first
+import { Component } from '../../core/Component.js';
+import { eventBus } from '../../core/EventBus.js';
+
+// 2. Config imports
+import { Events } from '../../config/events.js';
+import { NODE_CONFIG } from '../../config/nodeTypes.js';
+
+// 3. Utility imports
+import { formatTimestamp } from '../../utils/date.js';
+import { escapeHtml } from '../../utils/sanitize.js';
+
+// 4. Feature imports (if needed)
+import { IconService } from '../../services/IconService.js';
+```
+
+## Base Class Usage
+
+### Extending Component (for UI)
+
+```javascript
+import { Component } from '../../core/Component.js';
+import { Events } from '../../config/events.js';
+
+export class MyComponent extends Component {
+  /**
+   * Initialize component
+   * Called once after construction
+   */
+  init() {
+    this.data = null;
+    this.bindEvents();
+  }
+
+  /**
+   * Bind to events and state
+   * Auto-cleanup on destroy
+   */
+  bindEvents() {
+    // Subscribe to events
+    this.subscribe(Events.DATA_LOADED, this.handleData);
+    
+    // Watch state changes
+    this.watchState('some.path', this.handleStateChange);
+    
+    // DOM event listeners
+    const button = this.container.querySelector('button');
+    this.addListener(button, 'click', this.handleClick);
+  }
+
+  /**
+   * Render UI
+   * Called whenever state changes
+   */
+  render() {
+    if (!this.container) return;
+    
+    const element = this.createElement('div', {
+      className: 'my-component'
+    }, ['Content']);
+    
+    this.container.innerHTML = '';
+    this.container.appendChild(element);
+  }
+
+  /**
+   * Event handlers
+   */
+  handleData = ({ data }) => {
+    this.data = data;
+    this.render();
+  };
+
+  handleStateChange = ({ value }) => {
+    this.render();
+  };
+
+  handleClick = (event) => {
+    this.emit(Events.MY_ACTION, { data: this.data });
+  };
+}
+```
+
+### Extending Module (for logic)
+
+```javascript
+import { Module } from '../../core/Module.js';
+import { Events } from '../../config/events.js';
+
+export class MyModule extends Module {
+  /**
+   * Initialize module
+   */
+  init() {
+    this.cache = new Map();
+    this.bindEvents();
+  }
+
+  /**
+   * Bind to events
+   */
+  bindEvents() {
+    this.subscribe(Events.DATA_REQUEST, this.handleRequest);
+  }
+
+  /**
+   * Process data
+   */
+  handleRequest = async ({ params }) => {
+    try {
+      const result = await this.processData(params);
+      this.setState('result', result);
+      this.emit(Events.DATA_READY, { result });
+    } catch (error) {
+      this.emit(Events.APP_ERROR, { error });
+    }
+  };
+
+  /**
+   * Business logic
+   */
+  async processData(params) {
+    // Implementation
+    return result;
+  }
+}
+```
+
+## Extension Guidelines
+
+### Adding a New Feature
+
+1. **Determine type**: Component (UI) or Module (logic)?
+2. **Create directory**: `js/features/MyFeature/`
+3. **Extend base class**: `Component` or `Module`
+4. **Define events**: Add to `config/events.js`
+5. **Implement lifecycle**: `init()`, `bindEvents()`, `render()`
+6. **Register in main.js**: Initialize in appropriate section
+7. **Test in isolation**: Create test case
+8. **Document**: Add to MODULE_MAP.md
+
+### Adding a New API Endpoint
+
+1. **Backend**: Create `server/routes/myroute.py`
+2. **Register**: Add to `server/handler.py` ROUTES
+3. **Frontend**: Add method to `APIClient.js`
+4. **Test**: Verify with curl/browser
+
+### Adding a New Node Type
+
+1. **Config**: Add to `config/nodeTypes.js`
+2. **Factory**: Add method to `NodeFactory.js`
+3. **Parser**: Handle in `SessionParser.js`
+4. **Transformer**: Handle in `TreeTransformer.js`
+5. **UI**: Update `TreeView.js` and `DetailPanel.js`
+
+## Anti-Patterns
+
+### ❌ Don't Do This
+
+```javascript
+// 1. Direct module coupling
+import { TreeView } from './TreeView.js';
+treeView.selectNode(node);
+
+// 2. Shared mutable state
+export let currentSession = null;
+
+// 3. Mixed concerns
+class TreeView {
+  loadSession() { /* data loading in UI */ }
+  render() { /* rendering */ }
+}
+
+// 4. No cleanup
+class MyComponent {
+  init() {
+    eventBus.on('event', this.handler);  // Memory leak!
+  }
+}
+
+// 5. String literals for events
+eventBus.emit('session-loaded', data);  // Typo-prone
+
+// 6. Hardcoded dependencies
+class MyModule {
+  constructor() {
+    this.api = new APIClient();  // Can't test
+  }
+}
+```
+
+### ✅ Do This Instead
+
+```javascript
+// 1. Event-based communication
+eventBus.emit(Events.NODE_SELECT, { node });
+
+// 2. Centralized immutable state
+state.set('session', newSession);
+
+// 3. Single responsibility
+class TreeView extends Component {
+  render() { /* only rendering */ }
+}
+class SessionLoader extends Module {
+  loadSession() { /* only loading */ }
+}
+
+// 4. Auto-cleanup with base class
+class MyComponent extends Component {
+  bindEvents() {
+    this.subscribe('event', this.handler);  // Auto-cleanup
+  }
+}
+
+// 5. Event constants
+eventBus.emit(Events.SESSION_LOADED, data);
+
+// 6. Dependency injection
+class MyModule extends Module {
+  constructor(options = {}) {
+    super(options);
+    this.api = options.apiClient;  // Testable
+  }
+}
+```
+
+## Testing Strategy
+
+### Unit Tests
+Test modules in isolation:
+
+```javascript
+// Test SessionParser
+const parser = new SessionParser();
+const events = [{ type: 'user', ... }];
+const result = parser.parseEvents(events);
+assert(result.length === 1);
+assert(result[0].type === 'user');
+```
+
+### Integration Tests
+Test module interactions:
+
+```javascript
+// Test data flow
+const bus = new EventBus();
+const state = new StateManager();
+const parser = new SessionParser({ eventBus: bus });
+
+let loaded = false;
+bus.on(Events.SESSION_LOADED, () => loaded = true);
+
+parser.parseEvents(events);
+assert(loaded === true);
+```
+
+### Component Tests
+Test UI components:
+
+```javascript
+// Test TreeView
+const container = document.createElement('div');
+const treeView = new TreeView(container);
+
+treeView.init();
+state.set('session', mockSession);
+
+assert(container.querySelector('.tree-node') !== null);
+```
+
+## Performance Guidelines
+
+### Debouncing
+```javascript
+import { debounce } from '../utils/debounce.js';
+
+const debouncedSearch = debounce((query) => {
+  this.performSearch(query);
+}, 300);
+```
+
+### Lazy Loading
+```javascript
+// Load sub-agents only when needed
+async loadSubAgents(tree) {
+  for (const node of tree.rootMessages) {
+    if (node.type === 'subagent' && !node.loaded) {
+      await this.loadSubAgent(node);
+    }
+  }
+}
+```
+
+### Memory Management
+```javascript
+// Clear old data when loading new session
+class App {
+  async loadSession(project, sessionId) {
+    // Clear previous session
+    state.set('session', null);
+    
+    // Load new session
+    const session = await this.apiClient.loadSession(project, sessionId);
+    state.set('session', session);
+  }
+}
+```
+
+## Security Rules
+
+### XSS Prevention
+```javascript
+import { escapeHtml } from './utils/sanitize.js';
+
+// Always escape user content
+const safeContent = escapeHtml(userInput);
+element.textContent = safeContent;  // Use textContent, not innerHTML
+```
+
+### Path Validation (Backend)
+```python
+from server.utils.security import is_safe_path
+
+def handle(handler, params):
+    path = params.get('path')
+    if not is_safe_path(path):
+        handler.send_error_json(403, "Invalid path")
+        return
+```
+
+## Documentation Requirements
+
+When creating a new module:
+
+1. **JSDoc comments** on public methods
+2. **README** in feature directory (if complex)
+3. **Update MODULE_MAP.md** with new module
+4. **Add events** to Events catalog
+5. **Update ARCHITECTURE.md** if architectural change
+
+## Summary
+
+The modular architecture provides:
+
+✅ **Maintainability** - Easy to find and fix bugs  
+✅ **Extensibility** - Add features without breaking existing code  
+✅ **Testability** - Test modules in isolation  
+✅ **Performance** - Efficient event-driven updates  
+✅ **Developer Experience** - Clear patterns, no surprises  
+
+Follow these rules to maintain architectural integrity!

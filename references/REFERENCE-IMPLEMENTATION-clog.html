@@ -1,0 +1,895 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JSONL Log Viewer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Custom scrollbar for better aesthetics */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #f1f5f9;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #94a3b8;
+            border-radius: 10px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #64748b;
+        }
+        .message-content pre {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            background-color: #f3f4f6;
+            padding: 1rem;
+            border-radius: 0.5rem;
+            color: #1f2937;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body class="bg-slate-100 text-slate-800">
+
+    <div class="container mx-auto p-4 md:p-8 max-w-7xl">
+        <!-- Header -->
+        <header class="bg-white p-6 rounded-xl shadow-md mb-8 border border-slate-200">
+            <div class="flex flex-col md:flex-row justify-between items-center">
+                <div>
+                    <h1 class="text-3xl font-bold text-slate-900">JSONL Log Viewer</h1>
+                    <p class="text-slate-500 mt-1">Select and view structured log files (`.jsonl`) in a readable format.</p>
+                </div>
+                <div class="mt-4 md:mt-0">
+                    <label for="fileInput" class="cursor-pointer bg-blue-600 text-white font-bold py-3 px-6 rounded-lg hover:bg-blue-700 transition-all duration-300 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 inline-flex items-center">
+                        <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
+                        Choose File
+                    </label>
+                    <input type="file" id="fileInput" class="hidden" accept=".jsonl">
+                </div>
+            </div>
+        </header>
+
+        <!-- Claude Projects File Browser -->
+        <div class="bg-white p-6 rounded-xl shadow-md mb-8 border border-slate-200">
+            <div class="flex flex-col space-y-4">
+                <div class="flex flex-col md:flex-row md:items-center justify-between gap-2">
+                    <div>
+                        <h2 class="text-xl font-semibold text-slate-800">Claude Projects Browser</h2>
+                        <p class="text-sm text-slate-500 mt-1">Browse your Claude logs from <code class="bg-slate-100 px-1 py-0.5 rounded text-xs" id="defaultPathDisplay"></code></p>
+                    </div>
+                    <button id="refreshBtn" class="px-4 py-2 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-colors text-sm font-medium">
+                        <svg class="w-4 h-4 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                        </svg>
+                        Refresh
+                    </button>
+                </div>
+                
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <!-- Project Selection -->
+                    <div>
+                        <label for="projectSelect" class="block text-sm font-medium text-slate-700 mb-2">Select Project</label>
+                        <select id="projectSelect" class="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                            <option value="">Loading projects...</option>
+                        </select>
+                    </div>
+                    
+                    <!-- JSONL File Selection -->
+                    <div>
+                        <label for="jsonlSelect" class="block text-sm font-medium text-slate-700 mb-2">Select Log File</label>
+                        <select id="jsonlSelect" class="w-full p-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" disabled>
+                            <option value="">Select a project first</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pt-4 border-t border-slate-200">
+                    <div class="flex flex-col gap-2">
+                        <div class="text-sm text-slate-500">
+                            <span id="pathDisplay">Path: Select a project to see the path</span>
+                        </div>
+                        <div class="flex flex-col sm:flex-row gap-3">
+                            <div class="flex items-center gap-2">
+                                <input type="checkbox" id="monitorFileCheckbox" class="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 focus:ring-2" disabled>
+                                <label for="monitorFileCheckbox" class="text-sm text-slate-600 select-none">
+                                    <span class="flex items-center gap-2">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                                        </svg>
+                                        Monitor file for changes
+                                    </span>
+                                </label>
+                                <span id="monitorStatus" class="text-xs text-slate-400 hidden">●</span>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <input type="checkbox" id="autoScrollCheckbox" class="w-4 h-4 text-green-600 bg-gray-100 border-gray-300 rounded focus:ring-green-500 focus:ring-2">
+                                <label for="autoScrollCheckbox" class="text-sm text-slate-600 select-none">
+                                    <span class="flex items-center gap-2">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3"></path>
+                                        </svg>
+                                        Auto-scroll to latest
+                                    </span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                    <button id="loadJsonlBtn" class="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium disabled:bg-slate-300 disabled:cursor-not-allowed" disabled>
+                        <svg class="w-4 h-4 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path>
+                        </svg>
+                        Load Log File
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content Area -->
+        <main id="logContainer" class="space-y-6">
+            <!-- Initial placeholder -->
+            <div id="placeholder" class="text-center py-20 px-6 bg-white rounded-xl shadow-md border border-slate-200">
+                <svg class="mx-auto h-12 w-12 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                    <path vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                <h3 class="mt-2 text-lg font-medium text-slate-900">No file selected</h3>
+                <p class="mt-1 text-sm text-slate-500">Please select a `.jsonl` file to display its contents.</p>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        /**
+         * Gets the user's home directory and constructs the Claude projects path
+         * Works cross-platform for Windows, Mac, and Linux
+         */
+        function getClaudeProjectsPath() {
+            // Browser environment - we can't directly access environment variables
+            // But we can detect the OS and provide the typical path structure
+            const platform = navigator.platform.toLowerCase();
+            const userAgent = navigator.userAgent.toLowerCase();
+            
+            if (platform.includes('win') || userAgent.includes('windows')) {
+                // Windows: C:\Users\[username]\.claude\projects\
+                return `%USERPROFILE%\\.claude\\projects\\`;
+            } else if (platform.includes('mac') || userAgent.includes('mac')) {
+                // macOS: /Users/[username]/.claude/projects/
+                return `$HOME/.claude/projects/`;
+            } else {
+                // Linux/Unix: /home/[username]/.claude/projects/
+                return `$HOME/.claude/projects/`;
+            }
+        }
+        
+        /**
+         * Gets a user-friendly display version of the Claude projects path
+         */
+        function getDisplayPath() {
+            const platform = navigator.platform.toLowerCase();
+            const userAgent = navigator.userAgent.toLowerCase();
+            
+            if (platform.includes('win') || userAgent.includes('windows')) {
+                return `C:\\Users\\[username]\\.claude\\projects\\`;
+            } else if (platform.includes('mac') || userAgent.includes('mac')) {
+                return `/Users/[username]/.claude/projects/`;
+            } else {
+                return `/home/[username]/.claude/projects/`;
+            }
+        }
+        
+        // Get the Claude projects path for current platform
+        const DEFAULT_CLAUDE_PATH = getClaudeProjectsPath();
+        const DISPLAY_CLAUDE_PATH = getDisplayPath();
+        
+        // File monitoring variables
+        let monitoringInterval = null;
+        let currentFileHandle = null;
+        let lastModified = null;
+        
+        // Initialize event listeners
+        document.getElementById('fileInput').addEventListener('change', handleFileSelect, false);
+        document.getElementById('projectSelect').addEventListener('change', handleProjectSelect, false);
+        document.getElementById('refreshBtn').addEventListener('click', loadProjects, false);
+        document.getElementById('loadJsonlBtn').addEventListener('click', handleJsonlLoad, false);
+        document.getElementById('monitorFileCheckbox').addEventListener('change', handleMonitorToggle, false);
+        
+        // Load projects on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            // Update the default path display
+            document.getElementById('defaultPathDisplay').textContent = DISPLAY_CLAUDE_PATH;
+            loadProjects();
+        });
+
+        /**
+         * Loads available Claude projects from the default directory.
+         * Note: Due to browser security restrictions, this will show a notice
+         * to users about manually browsing to the projects folder.
+         */
+        async function loadProjects() {
+            const projectSelect = document.getElementById('projectSelect');
+            const pathDisplay = document.getElementById('pathDisplay');
+            
+            projectSelect.innerHTML = '<option value="">Browse to Claude projects folder...</option>';
+            
+            // Check if File System Access API is supported
+            if ('showDirectoryPicker' in window) {
+                try {
+                    projectSelect.innerHTML += '<option value="browse">🗂️ Browse for Projects Folder</option>';
+                    pathDisplay.textContent = `Path: Click "Browse for Projects Folder" or navigate to: ${DISPLAY_CLAUDE_PATH}`;
+                } catch (error) {
+                    console.error('File System Access API error:', error);
+                }
+            } else {
+                // Fallback for browsers without File System Access API
+                projectSelect.innerHTML = `
+                    <option value="">Manual file selection required</option>
+                    <option value="manual">📁 Use file picker instead</option>
+                `;
+                pathDisplay.textContent = `Path: Please use the "Choose File" button above to select JSONL files manually from ${DISPLAY_CLAUDE_PATH}`;
+            }
+        }
+
+        /**
+         * Handles project selection changes.
+         */
+        async function handleProjectSelect() {
+            const projectSelect = document.getElementById('projectSelect');
+            const jsonlSelect = document.getElementById('jsonlSelect');
+            const loadBtn = document.getElementById('loadJsonlBtn');
+            const pathDisplay = document.getElementById('pathDisplay');
+            
+            const selectedValue = projectSelect.value;
+            
+            if (selectedValue === 'browse' && 'showDirectoryPicker' in window) {
+                try {
+                    const dirHandle = await window.showDirectoryPicker({
+                        startIn: 'documents'
+                    });
+                    
+                    // Look for JSONL files in the selected directory
+                    const jsonlFiles = [];
+                    for await (const [name, handle] of dirHandle.entries()) {
+                        if (handle.kind === 'file' && name.endsWith('.jsonl')) {
+                            const file = await handle.getFile();
+                            jsonlFiles.push({ name, handle, lastModified: file.lastModified });
+                        }
+                    }
+
+                    // Sort files by modification date (newest first)
+                    jsonlFiles.sort((a, b) => b.lastModified - a.lastModified);
+                    
+                    // Populate JSONL select
+                    jsonlSelect.innerHTML = '<option value="">Select a log file</option>';
+                    jsonlFiles.forEach((file, index) => {
+                        const option = document.createElement('option');
+                        option.value = index; // Use index after sorting
+                        
+                        const date = new Date(file.lastModified);
+                        const formattedDate = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}:${String(date.getSeconds()).padStart(2, '0')}`;
+                        
+                        option.textContent = `(${formattedDate}) ${file.name}`;
+                        option.dataset.fileHandle = JSON.stringify({name: file.name}); // Keep this for handle retrieval
+                        jsonlSelect.appendChild(option);
+                    });
+                    
+                    // Store file handles for later use
+                    window.currentJsonlFiles = jsonlFiles;
+                    jsonlSelect.disabled = false;
+                    pathDisplay.textContent = `Path: ${dirHandle.name} (${jsonlFiles.length} JSONL files found)`;
+                    
+                } catch (error) {
+                    console.error('Directory selection error:', error);
+                    jsonlSelect.innerHTML = '<option value="">Error accessing directory</option>';
+                }
+            } else if (selectedValue === 'manual') {
+                jsonlSelect.innerHTML = '<option value="">Use "Choose File" button above</option>';
+                jsonlSelect.disabled = true;
+                pathDisplay.textContent = `Path: Please use the "Choose File" button above to select JSONL files manually from ${DISPLAY_CLAUDE_PATH}`;
+            } else {
+                jsonlSelect.innerHTML = '<option value="">Select a project first</option>';
+                jsonlSelect.disabled = true;
+                loadBtn.disabled = true;
+            }
+        }
+
+        /**
+         * Handles JSONL file loading from the project browser.
+         */
+        async function handleJsonlLoad() {
+            const jsonlSelect = document.getElementById('jsonlSelect');
+            const selectedIndex = jsonlSelect.value;
+            
+            if (selectedIndex === '' || !window.currentJsonlFiles) {
+                return;
+            }
+            
+            try {
+                const fileHandle = window.currentJsonlFiles[selectedIndex].handle;
+                const file = await fileHandle.getFile();
+                const contents = await file.text();
+                
+                // Store file handle and timestamp for monitoring
+                currentFileHandle = fileHandle;
+                lastModified = file.lastModified;
+                
+                const logs = parseJsonl(contents);
+                displayLogs(logs);
+                
+                // Hide the placeholder
+                const placeholder = document.getElementById('placeholder');
+                if (placeholder) {
+                    placeholder.style.display = 'none';
+                }
+                
+                // Enable monitoring checkbox
+                const monitorCheckbox = document.getElementById('monitorFileCheckbox');
+                monitorCheckbox.disabled = false;
+                
+                // Auto-scroll after initial load
+                setTimeout(() => {
+                    autoScrollToBottom();
+                }, 100);
+                
+            } catch (error) {
+                console.error('Error loading JSONL file:', error);
+                displayError('Failed to load the selected log file.');
+            }
+        }
+
+        // Enable the load button when a JSONL file is selected
+        document.getElementById('jsonlSelect').addEventListener('change', function() {
+            const loadBtn = document.getElementById('loadJsonlBtn');
+            const monitorCheckbox = document.getElementById('monitorFileCheckbox');
+            loadBtn.disabled = this.value === '';
+            // Enable monitoring checkbox only if File System Access API is supported and a file is selected
+            monitorCheckbox.disabled = this.value === '' || !('showDirectoryPicker' in window);
+        });
+
+        /**
+         * Handles file monitoring toggle.
+         */
+        function handleMonitorToggle() {
+            const checkbox = document.getElementById('monitorFileCheckbox');
+            const status = document.getElementById('monitorStatus');
+            
+            if (checkbox.checked) {
+                startFileMonitoring();
+                status.className = 'text-xs text-green-500';
+                status.textContent = '● Monitoring';
+                status.classList.remove('hidden');
+            } else {
+                stopFileMonitoring();
+                status.className = 'text-xs text-slate-400 hidden';
+                status.textContent = '●';
+            }
+        }
+
+        /**
+         * Starts monitoring the current file for changes.
+         */
+        function startFileMonitoring() {
+            if (!currentFileHandle || monitoringInterval) {
+                return;
+            }
+            
+            console.log('Starting file monitoring...');
+            
+            // Check for changes every 2 seconds
+            monitoringInterval = setInterval(async () => {
+                try {
+                    const file = await currentFileHandle.getFile();
+                    const currentModified = file.lastModified;
+                    
+                    if (lastModified && currentModified > lastModified) {
+                        console.log('File changed, reloading...');
+                        const status = document.getElementById('monitorStatus');
+                        status.className = 'text-xs text-blue-500';
+                        status.textContent = '● Reloading...';
+                        
+                        // Reload the file
+                        const contents = await file.text();
+                        const logs = parseJsonl(contents);
+                        displayLogs(logs);
+                        
+                        // Auto-scroll to bottom after update
+                        setTimeout(() => {
+                            autoScrollToBottom();
+                        }, 100);
+                        
+                        // Update status back to monitoring
+                        setTimeout(() => {
+                            status.className = 'text-xs text-green-500';
+                            status.textContent = '● Monitoring';
+                        }, 1000);
+                    }
+                    
+                    lastModified = currentModified;
+                } catch (error) {
+                    console.error('Error monitoring file:', error);
+                    stopFileMonitoring();
+                    const checkbox = document.getElementById('monitorFileCheckbox');
+                    checkbox.checked = false;
+                    
+                    const status = document.getElementById('monitorStatus');
+                    status.className = 'text-xs text-red-500';
+                    status.textContent = '● Error';
+                    setTimeout(() => {
+                        status.classList.add('hidden');
+                    }, 3000);
+                }
+            }, 2000);
+        }
+
+        /**
+         * Stops monitoring the current file.
+         */
+        function stopFileMonitoring() {
+            if (monitoringInterval) {
+                clearInterval(monitoringInterval);
+                monitoringInterval = null;
+                console.log('Stopped file monitoring');
+            }
+        }
+
+        /**
+         * Scrolls to the bottom of the page smoothly if auto-scroll is enabled.
+         */
+        function autoScrollToBottom() {
+            const autoScrollCheckbox = document.getElementById('autoScrollCheckbox');
+            if (autoScrollCheckbox.checked) {
+                window.scrollTo({
+                    top: document.body.scrollHeight,
+                    behavior: 'smooth'
+                });
+            }
+        }
+
+        /**
+         * Handles the file selection event.
+         * @param {Event} event The file selection event.
+         */
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (!file) {
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const contents = e.target.result;
+                try {
+                    // Clear file handle since this is manual file selection
+                    currentFileHandle = null;
+                    lastModified = null;
+                    
+                    // Disable monitoring for manual file selection
+                    const monitorCheckbox = document.getElementById('monitorFileCheckbox');
+                    monitorCheckbox.disabled = true;
+                    monitorCheckbox.checked = false;
+                    stopFileMonitoring();
+                    
+                    const logs = parseJsonl(contents);
+                    displayLogs(logs);
+                    
+                    // Auto-scroll after initial load
+                    setTimeout(() => {
+                        autoScrollToBottom();
+                    }, 100);
+                } catch (error) {
+                    console.error("Error displaying logs:", error);
+                    displayError("Failed to process the logs after parsing.");
+                }
+            };
+            reader.onerror = function() {
+                displayError("Failed to read the file.");
+            };
+            reader.readAsText(file);
+        }
+
+        /**
+         * Parses a string of JSONL content into an array of objects.
+         * This version is robust and will skip any malformed lines.
+         * @param {string} content The string content of the .jsonl file.
+         * @returns {Array<Object>} An array of parsed log objects.
+         */
+        function parseJsonl(content) {
+            const lines = content.trim().split('\n');
+            const logs = [];
+            lines.forEach((line, index) => {
+                if (line.trim() === '') {
+                    return;
+                }
+                try {
+                    logs.push(JSON.parse(line));
+                } catch (error) {
+                    console.error(`Skipping malformed JSON on line ${index + 1}:`, line, error);
+                }
+            });
+            return logs;
+        }
+
+        /**
+         * Displays the parsed logs in the UI, grouped by session and structured as conversation threads.
+         * @param {Array<Object>} logs The array of log objects.
+         */
+        function displayLogs(logs) {
+            const container = document.getElementById('logContainer');
+            container.innerHTML = ''; 
+
+            if (logs.length === 0) {
+                displayError("The selected file is empty or does not contain valid log entries.");
+                return;
+            }
+            
+            const sessions = logs.reduce((acc, log) => {
+                const sessionId = log.sessionId || 'default-session';
+                if (!acc[sessionId]) {
+                    acc[sessionId] = [];
+                }
+                acc[sessionId].push(log);
+                return acc;
+            }, {});
+
+            const sortedSessionIds = Object.keys(sessions).sort((a, b) => {
+                const timeA = new Date(sessions[a][0].timestamp).getTime();
+                const timeB = new Date(sessions[b][0].timestamp).getTime();
+                return timeA - timeB;
+            });
+
+            sortedSessionIds.forEach(sessionId => {
+                const sessionLogs = sessions[sessionId];
+                const sessionContainer = document.createElement('div');
+                sessionContainer.className = 'bg-white p-4 sm:p-6 rounded-xl shadow-md border border-slate-200';
+                
+                const headerSection = document.createElement('div');
+                headerSection.className = 'mb-4 pb-4 border-b border-slate-200';
+
+                const titleRow = document.createElement('div');
+                titleRow.className = 'flex justify-between items-center';
+
+                const sessionHeader = document.createElement('h2');
+                sessionHeader.className = 'text-xl font-semibold text-slate-700';
+                sessionHeader.innerHTML = `<span class="font-mono bg-slate-100 text-slate-600 px-2 py-1 rounded-md text-sm">${sessionId}</span>`;
+                
+                titleRow.appendChild(sessionHeader);
+                headerSection.appendChild(titleRow);
+
+                let totalInputTokens = 0;
+                let totalOutputTokens = 0;
+                let firstTimestamp = Infinity;
+                let lastTimestamp = 0;
+
+                let totalCacheCreationTokens = 0;
+                let totalCacheReadTokens = 0;
+
+                sessionLogs.forEach(log => {
+                    const currentTimestamp = new Date(log.timestamp).getTime();
+                    if (currentTimestamp < firstTimestamp) firstTimestamp = currentTimestamp;
+                    if (currentTimestamp > lastTimestamp) lastTimestamp = currentTimestamp;
+
+                    if (log.message?.usage) {
+                        totalInputTokens += log.message.usage.input_tokens || 0;
+                        totalOutputTokens += log.message.usage.output_tokens || 0;
+                        totalCacheCreationTokens += log.message.usage.cache_creation_input_tokens || 0;
+                        totalCacheReadTokens += log.message.usage.cache_read_input_tokens || 0;
+                    }
+                });
+
+                const durationMs = lastTimestamp - firstTimestamp;
+                const totalSeconds = Math.floor(durationMs / 1000);
+                const hours = Math.floor(totalSeconds / 3600);
+                const minutes = Math.floor((totalSeconds % 3600) / 60);
+                const seconds = totalSeconds % 60;
+
+                const durationString = [
+                    String(hours).padStart(2, '0'),
+                    String(minutes).padStart(2, '0'),
+                    String(seconds).padStart(2, '0')
+                ].join(':');
+
+                // Add session metadata
+                const sessionInfo = sessionLogs[0];
+                const metadataContainer = document.createElement('div');
+                metadataContainer.className = 'grid grid-cols-1 md:grid-cols-2 gap-2 text-xs text-slate-600 mt-3 pt-3 border-t border-slate-200/60';
+                metadataContainer.innerHTML = `
+                    ${sessionInfo.version ? `<div><span class="font-semibold">Version:</span> <span class="font-mono">${sessionInfo.version}</span></div>` : ''}
+                    ${sessionInfo.gitBranch ? `<div><span class="font-semibold">Branch:</span> <span class="font-mono">${sessionInfo.gitBranch}</span></div>` : ''}
+                    ${sessionInfo.cwd ? `<div class="md:col-span-2"><span class="font-semibold">Working Directory:</span> <span class="font-mono text-xs break-all">${sessionInfo.cwd}</span></div>` : ''}
+                `;
+                headerSection.appendChild(metadataContainer);
+
+                const metricsContainer = document.createElement('div');
+                metricsContainer.className = 'flex flex-wrap gap-x-6 gap-y-1 text-xs text-slate-500 mt-3 pt-3 border-t border-slate-200/60 font-mono';
+                let metricsHTML = `
+                    <div><span class="font-semibold text-slate-600">Duration:</span> ${durationString}</div>
+                    <div><span class="font-semibold text-slate-600">Input Tokens:</span> ${totalInputTokens.toLocaleString()}</div>
+                    <div><span class="font-semibold text-slate-600">Output Tokens:</span> ${totalOutputTokens.toLocaleString()}</div>
+                `;
+                if (totalCacheCreationTokens > 0) {
+                    metricsHTML += `<div><span class="font-semibold text-slate-600">Cache Creation:</span> ${totalCacheCreationTokens.toLocaleString()}</div>`;
+                }
+                if (totalCacheReadTokens > 0) {
+                    metricsHTML += `<div><span class="font-semibold text-slate-600">Cache Read:</span> ${totalCacheReadTokens.toLocaleString()}</div>`;
+                }
+                metricsContainer.innerHTML = metricsHTML;
+                headerSection.appendChild(metricsContainer);
+                
+                sessionContainer.appendChild(headerSection);
+                
+                const logMap = new Map(sessionLogs.map(log => [log.uuid, { ...log, children: [] }]));
+                const roots = [];
+
+                sessionLogs.forEach(log => {
+                    if (log.parentUuid && logMap.has(log.parentUuid)) {
+                        const parentNode = logMap.get(log.parentUuid);
+                        if (parentNode) {
+                            parentNode.children.push(logMap.get(log.uuid));
+                        }
+                    } else {
+                        roots.push(logMap.get(log.uuid));
+                    }
+                });
+
+                roots.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+                const timelineContainer = document.createElement('div');
+                timelineContainer.className = 'space-y-6';
+
+                function flattenThread(node, thread = []) {
+                    if (!node) return thread;
+                    thread.push(node);
+                    if (node.children) {
+                        node.children
+                            .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
+                            .forEach(child => flattenThread(child, thread));
+                    }
+                    return thread;
+                }
+
+                roots.forEach(root => {
+                    const threadLogs = flattenThread(root);
+                    const threadContainer = document.createElement('div');
+                    threadContainer.className = 'space-y-4 border-t border-slate-200 pt-6 mt-6 first:mt-0 first:pt-0 first:border-t-0';
+                    
+                    threadLogs.forEach(log => {
+                        const logElement = createLogEntryElement(log);
+                        threadContainer.appendChild(logElement);
+                    });
+                    timelineContainer.appendChild(threadContainer);
+                });
+                
+                sessionContainer.appendChild(timelineContainer);
+                container.appendChild(sessionContainer);
+            });
+        }
+        
+        /**
+         * Renders the special '/dev' command content with proper HTML formatting.
+         * @param {string} text The content of the dev command.
+         * @returns {string} The formatted HTML string.
+         */
+        function renderDevCommand(text) {
+            const parts = text.split('```yaml');
+            const mainContent = parts[0];
+            const yamlContent = parts.length > 1 ? parts[1].split('```')[0] : '';
+
+            let html = '<div class="space-y-2">';
+
+            mainContent.split('\n').forEach(line => {
+                const trimmedLine = line.trim();
+                if (trimmedLine.startsWith('## ')) {
+                    html += `</div><h2 class="text-lg font-semibold mt-4 mb-2 text-slate-800 pt-2 border-t">${escapeHtml(trimmedLine.substring(3))}</h2><div class="space-y-2">`;
+                } else if (trimmedLine.startsWith('# ')) {
+                    html += `</div><h1 class="text-xl font-bold mt-2 mb-3 text-slate-900">${escapeHtml(trimmedLine.substring(2))}</h1><div class="space-y-2">`;
+                } else if (trimmedLine.startsWith('CRITICAL:')) {
+                    html += `<div class="my-2 p-3 bg-red-100 border-l-4 border-red-500 text-red-800 rounded-r-lg"><strong class="font-semibold">CRITICAL:</strong> ${escapeHtml(trimmedLine.substring(9).trim())}</div>`;
+                } else if (trimmedLine.startsWith('ACTIVATION-NOTICE:')) {
+                    html += `<div class="my-2 p-3 bg-yellow-100 border-l-4 border-yellow-500 text-yellow-800 rounded-r-lg"><strong class="font-semibold">ACTIVATION-NOTICE:</strong> ${escapeHtml(trimmedLine.substring(18).trim())}</div>`;
+                } else if (trimmedLine.startsWith('MANDATORY INTERACTION RULE:')) {
+                    html += `<div class="my-2 p-3 bg-blue-100 border-l-4 border-blue-500 text-blue-800 rounded-r-lg"><strong class="font-semibold">MANDATORY INTERACTION RULE:</strong> ${escapeHtml(trimmedLine.substring(27).trim())}</div>`;
+                } else if (trimmedLine.startsWith('- ')) {
+                    html += `<p class="ml-4 relative before:content-['•'] before:absolute before:left-[-1em] before:text-slate-500">${escapeHtml(trimmedLine.substring(1).trim())}</p>`;
+                } else if (trimmedLine) {
+                    html += `<p>${escapeHtml(trimmedLine)}</p>`;
+                }
+            });
+            
+            html += '</div>';
+
+            if (yamlContent) {
+                html += `<h3 class="text-md font-semibold mt-6 mb-2 text-slate-700 pt-4 border-t">Agent Definition (YAML)</h3>`;
+                html += `<pre class="bg-gray-800 text-white p-4 rounded-md text-sm font-mono overflow-x-auto">${escapeHtml(yamlContent.trim())}</pre>`;
+            }
+
+            return html;
+        }
+
+        /**
+         * Creates an HTML element for a single log entry.
+         * @param {Object} log The log object.
+         * @returns {HTMLElement} The created HTML element.
+         */
+        function createLogEntryElement(log) {
+            const entry = document.createElement('div');
+            const role = log.message?.role || log.type || 'system';
+            
+            const isUser = role.toLowerCase() === 'user';
+            const bgColor = isUser ? 'bg-blue-50' : 'bg-slate-50';
+            const borderColor = isUser ? 'border-blue-200' : 'border-slate-200';
+            const roleColor = isUser ? 'bg-blue-200 text-blue-800' : 'bg-slate-200 text-slate-800';
+
+            entry.className = `p-4 rounded-lg border ${bgColor} ${borderColor}`;
+
+            const header = document.createElement('div');
+            header.className = 'flex justify-between items-center text-sm mb-3';
+            
+            const roleBadge = document.createElement('span');
+            roleBadge.className = `px-2.5 py-0.5 rounded-full font-semibold text-xs uppercase ${roleColor}`;
+            roleBadge.textContent = role;
+            
+            const timestamp = document.createElement('span');
+            timestamp.className = 'text-slate-500 font-mono text-xs';
+            timestamp.textContent = new Date(log.timestamp).toLocaleString();
+            
+            header.appendChild(roleBadge);
+            header.appendChild(timestamp);
+
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'message-content text-sm';
+            
+            if (log.message && log.message.content) {
+                const content = log.message.content;
+                if (typeof content === 'string') {
+                    if (content.includes('<command-name>')) {
+                        contentDiv.innerHTML = `<pre class="bg-gray-800 text-white p-3 rounded-md">${escapeHtml(content)}</pre>`;
+                    } else {
+                        contentDiv.innerHTML = `<p>${escapeHtml(content).replace(/\n/g, '<br>')}</p>`;
+                    }
+                } else if (Array.isArray(content)) {
+                    content.forEach(part => {
+                        const partDiv = document.createElement('div');
+                        if (part.type === 'text') {
+                            if (part.text.includes('## COMPLETE AGENT DEFINITION FOLLOWS')) {
+                                partDiv.innerHTML = renderDevCommand(part.text);
+                            } else {
+                                partDiv.innerHTML = `<p>${escapeHtml(part.text).replace(/\n/g, '<br>')}</p>`;
+                            }
+                        } else if (part.type === 'tool_use') {
+                            const inputStr = JSON.stringify(part.input, null, 2);
+                            const truncatedInput = inputStr.length > 500 ? inputStr.substring(0, 500) + '\n  ...truncated...' : inputStr;
+                            partDiv.innerHTML = `
+                                <div class="mt-2 p-3 bg-indigo-50 rounded-md border border-indigo-200">
+                                    <div class="flex items-center gap-2 mb-2">
+                                        <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-indigo-100 text-indigo-800">
+                                            🔧 ${part.name}
+                                        </span>
+                                        ${part.id ? `<span class="text-xs text-slate-500 font-mono">${part.id}</span>` : ''}
+                                    </div>
+                                    <pre class="text-xs bg-white p-2 rounded border overflow-x-auto">${escapeHtml(truncatedInput)}</pre>
+                                </div>`;
+                        } else if (part.type === 'tool_result') {
+                            partDiv.innerHTML = `
+                                <div class="mt-2 p-3 bg-emerald-50 rounded-md border border-emerald-200">
+                                    <div class="flex items-center gap-2 mb-2">
+                                        <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800">
+                                            ✅ Tool Result
+                                        </span>
+                                        ${part.tool_use_id ? `<span class="text-xs text-slate-500 font-mono">→ ${part.tool_use_id}</span>` : ''}
+                                    </div>
+                                    <div class="text-sm bg-white p-2 rounded border">${escapeHtml(part.content || '').replace(/\n/g, '<br>')}</div>
+                                </div>`;
+                        }
+                        contentDiv.appendChild(partDiv);
+                    });
+                } else if (typeof content === 'object') {
+                     contentDiv.innerHTML = `<pre>${escapeHtml(JSON.stringify(content, null, 2))}</pre>`;
+                }
+            } else if (log.toolUseResult) {
+                let toolResultHTML = `
+                    <div class="mt-2 p-3 bg-emerald-50 rounded-md border border-emerald-200">
+                        <div class="flex items-center gap-2 mb-3">
+                            <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800">
+                                📊 Tool Result Data
+                            </span>
+                        </div>`;
+                
+                // Handle specific tool result types with better formatting
+                if (log.toolUseResult.newTodos && Array.isArray(log.toolUseResult.newTodos)) {
+                    toolResultHTML += `
+                        <div class="space-y-2">
+                            <h4 class="font-semibold text-emerald-800 text-sm">Todo List Updated</h4>
+                            <div class="space-y-1">`;
+                    log.toolUseResult.newTodos.forEach(todo => {
+                        const priorityColor = todo.priority === 'high' ? 'bg-red-100 text-red-800' : 
+                                            todo.priority === 'medium' ? 'bg-yellow-100 text-yellow-800' : 
+                                            'bg-green-100 text-green-800';
+                        const statusIcon = todo.status === 'completed' ? '✅' : 
+                                         todo.status === 'in_progress' ? '🔄' : '⏳';
+                        toolResultHTML += `
+                            <div class="flex items-center gap-2 text-sm bg-white p-2 rounded border">
+                                <span>${statusIcon}</span>
+                                <span class="flex-1">${escapeHtml(todo.content)}</span>
+                                <span class="px-2 py-1 rounded-full text-xs ${priorityColor}">${todo.priority}</span>
+                            </div>`;
+                    });
+                    toolResultHTML += `</div></div>`;
+                } else {
+                    // Fallback to JSON display for other tool result types
+                    toolResultHTML += `<pre class="text-xs bg-white p-2 rounded border overflow-x-auto">${escapeHtml(JSON.stringify(log.toolUseResult, null, 2))}</pre>`;
+                }
+                
+                toolResultHTML += `</div>`;
+                contentDiv.innerHTML = toolResultHTML;
+            } else {
+                contentDiv.innerHTML = `<pre>${escapeHtml(JSON.stringify(log, null, 2))}</pre>`;
+            }
+
+            const footer = document.createElement('div');
+            footer.className = 'mt-4 pt-3 border-t border-slate-200/80 text-xs text-slate-500 space-y-1 font-mono';
+
+            let footerHTML = '';
+            if (log.uuid) footerHTML += `<div><span class="font-semibold text-slate-600 w-20 inline-block">UUID:</span> ${log.uuid}</div>`;
+            if (log.parentUuid) footerHTML += `<div><span class="font-semibold text-slate-600 w-20 inline-block">Parent:</span> ${log.parentUuid}</div>`;
+            if (log.message?.id) footerHTML += `<div><span class="font-semibold text-slate-600 w-20 inline-block">Msg ID:</span> ${log.message.id}</div>`;
+            if (log.message?.usage) {
+                const usage = log.message.usage;
+                let usageText = '';
+                if (usage.input_tokens) usageText += `In: ${usage.input_tokens.toLocaleString()}`;
+                if (usage.output_tokens) usageText += ` | Out: ${usage.output_tokens.toLocaleString()}`;
+                if (usage.cache_creation_input_tokens) usageText += ` | Cache+: ${usage.cache_creation_input_tokens.toLocaleString()}`;
+                if (usage.cache_read_input_tokens) usageText += ` | Cache: ${usage.cache_read_input_tokens.toLocaleString()}`;
+                
+                if(usageText) footerHTML += `<div><span class="font-semibold text-slate-600 w-20 inline-block">Tokens:</span> ${usageText.startsWith(' | ') ? usageText.substring(3) : usageText}</div>`;
+            }
+            if (log.message?.model) {
+                footerHTML += `<div><span class="font-semibold text-slate-600 w-20 inline-block">Model:</span> ${log.message.model}</div>`;
+            }
+            
+            if(footerHTML) footer.innerHTML = footerHTML;
+
+            entry.appendChild(header);
+            entry.appendChild(contentDiv);
+            if(footer.innerHTML) entry.appendChild(footer);
+            
+            return entry;
+        }
+        
+        /**
+         * Displays an error message in the UI.
+         * @param {string} message The error message to display.
+         */
+        function displayError(message) {
+            const container = document.getElementById('logContainer');
+            container.innerHTML = `
+                <div id="error" class="text-center py-20 px-6 bg-red-50 text-red-700 rounded-xl shadow-md border border-red-200">
+                    <svg class="mx-auto h-12 w-12 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <h3 class="mt-2 text-lg font-medium">An Error Occurred</h3>
+                    <p class="mt-1 text-sm">${message}</p>
+                </div>`;
+        }
+        
+        /**
+         * Escapes HTML special characters to prevent XSS.
+         * @param {string} str The string to escape.
+         * @returns {string} The escaped string.
+         */
+        function escapeHtml(str) {
+            if (typeof str !== 'string') return '';
+            return str
+                 .replace(/&/g, "&amp;")
+                 .replace(/</g, "&lt;")
+                 .replace(/>/g, "&gt;")
+                 .replace(/"/g, "&quot;")
+                 .replace(/'/g, "&#039;");
+        }
+
+    </script>
+</body>
+</html>

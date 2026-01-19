@@ -1,0 +1,538 @@
+# Claude Session Historian Development Rules
+
+## Overview
+
+This project is a Claude session visualization and analysis tool. It reconstructs Claude conversations from JSONL session files stored in `~/.claude/projects/` and provides interactive viewing and export capabilities.
+
+## Reference Documentation
+
+**CRITICAL**: Always consult these reference files before working on session parsing or reconstruction:
+
+- `references/session-format.md` - Complete JSONL event structure and schemas
+- `references/event-schema.md` - TypeScript/Python types for all event types
+- `references/subagent-detection.md` - How to detect and trace sub-agent delegations
+- `references/session-discovery.md` - Finding and listing sessions (includes sessions-index.json handling)
+- `references/export-formats.md` - Output format specifications (markdown, HTML)
+- `references/troubleshooting.md` - Common issues and solutions
+
+## Claude Session Structure
+
+### File Location
+```
+~/.claude/projects/<normalized-project-path>/<session-id>.jsonl
+~/.claude/projects/<normalized-project-path>/sessions-index.json (metadata)
+~/.claude/projects/<normalized-project-path>/<session-id>/subagents/agent-<agent-id>.jsonl
+```
+
+**Path normalization**: Replace `/` and `.` with `-`
+- Example: `/Users/john/Code/app` → `Users-john-Code-app`
+
+### JSONL Format
+
+Each session file contains one JSON object per line (JSON Lines format):
+
+```jsonl
+{"type": "user", "timestamp": "2026-01-17T20:31:59.197Z", "message": {...}}
+{"type": "assistant", "timestamp": "2026-01-17T20:32:01.123Z", "message": {...}}
+{"type": "user", "timestamp": "2026-01-17T20:32:02.456Z", "message": {...}}
+```
+
+### Event Types
+
+**1. User Event**
+```json
+{
+  "type": "user",
+  "timestamp": "2026-01-17T20:31:59.197Z",
+  "message": {
+    "role": "user",
+    "content": [
+      {"type": "text", "text": "User message"},
+      {"type": "tool_result", "tool_use_id": "toolu_xyz", "content": "...", "is_error": false}
+    ]
+  }
+}
+```
+
+**2. Assistant Event**
+```json
+{
+  "type": "assistant",
+  "timestamp": "2026-01-17T20:32:01.123Z",
+  "message": {
+    "role": "assistant",
+    "content": [
+      {"type": "thinking", "thinking": "Internal reasoning...", "signature": "abc123"},
+      {"type": "text", "text": "Response text"},
+      {"type": "tool_use", "id": "toolu_xyz123", "name": "Read", "input": {"path": "/file.txt"}}
+    ]
+  }
+}
+```
+
+**3. Summary Event**
+```json
+{
+  "type": "summary",
+  "timestamp": "2026-01-17T21:00:00.000Z",
+  "summary": "Session summary text"
+}
+```
+
+### Content Item Types
+
+- `text` - Plain text message
+- `thinking` - Extended thinking block (optional signature for verification)
+- `tool_use` - Tool invocation with id, name, and input parameters
+- `tool_result` - Tool execution result (in user events), linked via tool_use_id
+
+## Sub-Agent Detection
+
+**Critical Pattern**: Sub-agent delegations are detected by finding `agentId:` in tool result content.
+
+```regex
+agentId:\s*([a-zA-Z0-9]+)
+```
+
+When found:
+1. Extract the agent ID
+2. Locate sub-agent file: `<session-id>/subagents/agent-<agent-id>.jsonl`
+3. Process sub-agent events recursively with increased nesting depth
+4. Display in chronological order (when delegation occurs, trace immediately)
+
+**Sub-agent modes**: Plan mode, Debug mode, Ask mode (detect from context clues)
+
+## sessions-index.json Handling
+
+**CRITICAL**: The `sessions-index.json` file can exceed 25,000 tokens and **must not be read directly** with the Read tool.
+
+### Correct Approaches
+
+**Option 1: Use jq (Preferred)**
+```bash
+# Get recent sessions with context
+jq -r '.entries | sort_by(.fileMtime) | reverse | limit(15;.[]) | 
+  "\(.modified) | \(.sessionId) | \(.firstPrompt[:80])"' \
+  ~/.claude/projects/<project-name>/sessions-index.json
+
+# Get specific session by ID
+jq -r '.entries[] | select(.sessionId == "<session-id>")' \
+  ~/.claude/projects/<project-name>/sessions-index.json
+```
+
+**Option 2: Use grep**
+```bash
+grep -A 5 '"sessionId": "abc123"' sessions-index.json
+```
+
+**Option 3: Fallback to directory listing**
+```bash
+ls -lt ~/.claude/projects/<project-name>/*.jsonl | head -20
+```
+
+**Never** try to load the entire sessions-index.json into memory via Read tool - use Shell commands with jq/grep instead.
+
+## Application Architecture
+
+### Implementation Status
+
+The Claude Session Viewer has been **fully implemented** as a modular web application. The implementation follows the golden standard from `assets/session-viewer_MOCK.jsx`.
+
+### Technology Stack
+
+- **Frontend**: Vanilla JavaScript (ES6+ modules), HTML5, CSS3
+- **Backend**: Python 3 with `http.server`
+- **Architecture**: Event-driven, modular, component-based
+- **No build step required**: Direct ES6 module imports
+
+### Application Location
+
+The complete application is in `app/`:
+- 32 JavaScript modules (~2,600 lines)
+- 12 Python modules (~400 lines)
+- 5 CSS stylesheets
+- Comprehensive documentation
+
+### UI Structure
+
+**1. Hierarchical + Sequential Data Model**
+
+The session is both hierarchical (parent-child relationships) and sequential (chronological order):
+
+```javascript
+const session = {
+  id: 'session-001',
+  timestamp: '2025-01-18T14:32:00Z',
+  model: 'claude-sonnet-4',
+  rootMessages: [
+    {
+      id: 'msg-1',
+      type: 'user',
+      content: '...',
+      children: [
+        {
+          id: 'msg-2',
+          type: 'assistant',
+          content: '...',
+          thinking: '...',
+          children: [
+            { id: 'tool-1', type: 'tool_call', name: 'read_file', ... },
+            { id: 'tool-2', type: 'tool_call', name: 'write_file', ... },
+            { id: 'subagent-1', type: 'subagent', children: [...] }
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+**2. Node Types**
+
+```javascript
+const NODE_CONFIG = {
+  user: { icon: User, color: '#3B82F6', label: 'USER' },
+  assistant: { icon: Bot, color: '#10B981', label: 'CLAUDE' },
+  tool_call: { icon: Wrench, color: '#F59E0B', label: 'TOOL' },
+  subagent: { icon: Zap, color: '#8B5CF6', label: 'AGENT' }
+};
+
+const STATUS_CONFIG = {
+  success: { icon: CheckCircle, color: '#10B981' },
+  error: { icon: XCircle, color: '#EF4444' },
+  running: { icon: Loader, color: '#3B82F6' },
+  pending: { icon: Clock, color: '#6B7280' }
+};
+```
+
+**3. UI Components**
+
+- **Header**: Session metadata, search, model info
+- **Stats Bar**: Total nodes, tool calls, sub-agents, errors, max depth, tool time
+- **Toolbar**: Type filter, thinking toggle, expand/collapse all
+- **Tree Panel**: Hierarchical tree view with expand/collapse
+- **Detail Panel**: Selected node details with sections for thinking, decision, content, input, output, errors
+
+**4. Key Features**
+
+- Tree visualization with connection lines
+- Expand/collapse nodes
+- Selection highlighting with colored borders
+- Filtering by node type
+- Search across content
+- Descendant count badges
+- Duration display for tool calls
+- Thinking block visibility toggle
+- Responsive layout (desktop/mobile)
+
+**5. Visual Design**
+
+- Dark theme with JetBrains Mono + IBM Plex Sans fonts
+- Color-coded node types
+- Depth-based indentation (24px per level)
+- Hover effects and transitions
+- Monospace for code/timestamps
+- Status icons with animations (spinner for running)
+
+### Transformation: JSONL → UI Data Model
+
+When implementing the session loader/parser:
+
+1. **Parse JSONL events sequentially**
+2. **Build hierarchical structure**:
+   - User message → Assistant response (children)
+   - Assistant response → Tool calls (children)
+   - Tool calls → Tool results (children)
+   - Tool results with agentId → Sub-agent sessions (children)
+3. **Track metadata**: timestamps, durations, status
+4. **Preserve chronological order** within each level
+
+Example transformation:
+
+```python
+def build_tree_from_events(events):
+    """Transform flat JSONL events into hierarchical structure."""
+    root_messages = []
+    pending_tools = {}  # Map tool_use_id → tool node
+    current_assistant = None
+    
+    for event in events:
+        if event['type'] == 'user':
+            # Check for tool results
+            for content in event['message']['content']:
+                if content['type'] == 'tool_result':
+                    tool_id = content['tool_use_id']
+                    if tool_id in pending_tools:
+                        tool_node = pending_tools[tool_id]
+                        tool_node['output'] = content['content']
+                        tool_node['status'] = 'error' if content.get('is_error') else 'success'
+                        
+                        # Check for sub-agent
+                        agent_id = detect_agent_id(content)
+                        if agent_id:
+                            subagent_node = load_subagent(agent_id)
+                            tool_node['children'].append(subagent_node)
+                
+                elif content['type'] == 'text':
+                    # Regular user message
+                    user_node = create_node('user', content['text'], event['timestamp'])
+                    root_messages.append(user_node)
+                    current_assistant = None
+        
+        elif event['type'] == 'assistant':
+            assistant_node = create_node('assistant', '', event['timestamp'])
+            
+            for content in event['message']['content']:
+                if content['type'] == 'text':
+                    assistant_node['content'] = content['text']
+                elif content['type'] == 'thinking':
+                    assistant_node['thinking'] = content['thinking']
+                elif content['type'] == 'tool_use':
+                    tool_node = create_node('tool_call', content['name'], event['timestamp'])
+                    tool_node['input'] = content['input']
+                    tool_node['status'] = 'pending'
+                    assistant_node['children'].append(tool_node)
+                    pending_tools[content['id']] = tool_node
+            
+            # Attach to previous user message
+            if root_messages:
+                root_messages[-1]['children'].append(assistant_node)
+            
+            current_assistant = assistant_node
+    
+    return root_messages
+```
+
+## Development Guidelines
+
+### Parsing Sessions
+
+1. **Always use safe JSON parsing** - Skip malformed lines, don't fail entire session
+2. **Handle missing fields** - Use `.get()` with defaults
+3. **Process chronologically** - Maintain event order
+4. **Detect sub-agents immediately** - When agentId found, trace sub-agent before continuing
+5. **Stream large sessions** - Don't load everything into memory
+6. **Use generators** for lazy loading where possible
+
+### Error Handling
+
+```python
+def load_events_safely(session_file):
+    events = []
+    errors = []
+    
+    with open(session_file, 'r') as f:
+        for line_num, line in enumerate(f, 1):
+            line = line.strip()
+            if not line:
+                continue
+            
+            try:
+                event = json.loads(line)
+                events.append(event)
+            except json.JSONDecodeError as e:
+                errors.append({"line": line_num, "error": str(e)})
+    
+    if errors:
+        print(f"⚠️  Skipped {len(errors)} malformed lines")
+    
+    return events, errors
+```
+
+### Timestamp Formatting
+
+```python
+from datetime import datetime
+
+def format_timestamp(ts_str):
+    """Parse ISO 8601 timestamp and format for display."""
+    if not ts_str:
+        return "Unknown time"
+    
+    try:
+        dt = datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
+        return dt.strftime('%Y-%m-%d %H:%M:%S')
+    except ValueError:
+        return ts_str  # Return as-is if parsing fails
+```
+
+### Content Extraction
+
+```python
+def extract_text_content(content_items):
+    """Extract all text from content array or string."""
+    if isinstance(content_items, str):
+        return content_items
+    
+    texts = []
+    for item in content_items:
+        if isinstance(item, dict):
+            if item.get('type') == 'text':
+                texts.append(item.get('text', ''))
+            elif item.get('type') == 'thinking':
+                texts.append(f"[Thinking: {item.get('thinking', '')}]")
+    
+    return '\n\n'.join(texts)
+```
+
+### Sub-Agent Processing
+
+```python
+import re
+
+def detect_agent_id(content):
+    """Detect agent ID in tool result content."""
+    if isinstance(content, str):
+        match = re.search(r"agentId:\s*([a-zA-Z0-9]+)", content)
+        return match.group(1) if match else None
+    
+    if isinstance(content, list):
+        for item in content:
+            if isinstance(item, dict) and item.get('type') == 'text':
+                match = re.search(r"agentId:\s*([a-zA-Z0-9]+)", item.get('text', ''))
+                if match:
+                    return match.group(1)
+    
+    return None
+
+def load_subagent_session(project_dir, session_id, agent_id):
+    """Load sub-agent session file."""
+    subagent_path = os.path.join(
+        project_dir,
+        session_id,
+        "subagents",
+        f"agent-{agent_id}.jsonl"
+    )
+    
+    if os.path.exists(subagent_path):
+        return load_events_safely(subagent_path)[0]
+    
+    return None
+```
+
+## Export Formats
+
+### Supported Formats
+
+1. **Markdown** (default) - Full markdown with thinking blocks, code highlighting
+2. **Markdown Clean** - Simplified without thinking blocks
+3. **HTML** - Styled HTML with syntax highlighting and interactivity
+
+### Format Options
+
+- `--no-thinking` - Exclude thinking blocks
+- `--no-tools` - Show tool summaries only
+- `--agents-only` - Show only sub-agent interactions
+- `--compact` - Reduce whitespace
+- `--time-range <start> <end>` - Filter by timestamp
+
+## Testing Considerations
+
+### Test Cases
+
+1. **Simple session** - User question → Assistant response
+2. **With tool calls** - Multiple tool uses and results
+3. **With thinking** - Extended thinking blocks
+4. **With sub-agents** - Nested delegation (Plan/Debug mode)
+5. **With errors** - Failed tool calls, error status
+6. **Large session** - 500+ events, performance test
+7. **Malformed data** - Bad JSON lines, missing fields
+8. **Edge cases** - Empty content, missing timestamps, circular refs
+
+### Performance Benchmarks
+
+- Small session (< 50 events): < 100ms load time
+- Medium session (50-200 events): < 500ms load time
+- Large session (200-1000 events): < 2s load time
+- Very large session (1000+ events): Stream, show progress
+
+## Common Pitfalls
+
+### ❌ Don't Do This
+
+1. **Don't read sessions-index.json with Read tool** - Use jq/grep/Shell commands
+2. **Don't load entire session into memory** - Use streaming for large sessions
+3. **Don't assume content is always an array** - Can be string or array
+4. **Don't fail on malformed lines** - Skip and continue
+5. **Don't forget sub-agent recursion limits** - Max depth 10
+6. **Don't modify assets/session-viewer_MOCK.jsx** - It's the golden standard
+
+### ✅ Do This
+
+1. **Use jq for sessions-index.json queries** - Fast and efficient
+2. **Stream events for large sessions** - Generator patterns
+3. **Handle both string and array content** - Type check first
+4. **Skip malformed lines gracefully** - Log warnings, continue
+5. **Limit sub-agent recursion depth** - Prevent infinite loops
+6. **Reference the mock file for UI structure** - Match the data model
+
+## File Structure
+
+```
+claude-session-historian/
+├── .cursor/
+│   └── rules/
+│       └── session-development.mdc (this file)
+├── references/                 # ALWAYS consult these first
+│   ├── session-format.md
+│   ├── event-schema.md
+│   ├── subagent-detection.md
+│   ├── session-discovery.md
+│   ├── export-formats.md
+│   └── troubleshooting.md
+├── assets/
+│   └── session-viewer_MOCK.jsx # Golden standard UI (DO NOT MODIFY)
+├── scripts/                    # Python scripts for processing
+│   ├── session_finder.py       # Session discovery
+│   ├── reconstruct_conversation.py  # Main reconstruction logic
+│   └── export_session.py       # Export to various formats
+└── SKILL.md                    # Main skill entry point
+```
+
+## Key Principles
+
+1. **Progressive Disclosure** - Load session metadata first, full content on demand
+2. **Chronological Order** - Events displayed in temporal sequence
+3. **Hierarchical Structure** - Parent-child relationships preserved
+4. **Graceful Degradation** - Handle missing data, corrupted files
+5. **Performance Focus** - Stream large sessions, lazy load sub-agents
+6. **Visual Clarity** - Color-coded types, depth indentation, status icons
+
+## Integration Points
+
+### Session Loader (needs implementation)
+- Parse JSONL → Hierarchical tree structure
+- Detect sub-agents → Load recursively
+- Calculate statistics → Pass to stats bar
+- Handle errors → Skip gracefully
+
+### Export Engine (needs implementation)
+- Transform tree → Markdown/HTML
+- Apply filters → --no-thinking, --agents-only, etc.
+- Format timestamps → Human readable
+- Write output → File or stdout
+
+### MCP Integration (future)
+- Obsidian export with frontmatter
+- Anki card generation from Q&A sessions
+- Search across all sessions
+
+## Development Workflow
+
+1. **Understand**: Read relevant references/* files
+2. **Reference**: Check assets/session-viewer_MOCK.jsx for UI structure
+3. **Implement**: Write parser/exporter following guidelines
+4. **Test**: Use test cases (simple → complex → edge cases)
+5. **Validate**: Check against reference docs and mock UI
+6. **Document**: Update references if new patterns discovered
+
+## Questions to Ask Before Implementation
+
+- [ ] Have I read the relevant references/*.md files?
+- [ ] Does my data model match the mock UI structure?
+- [ ] Am I handling both string and array content?
+- [ ] Do I detect and trace sub-agents correctly?
+- [ ] Am I using jq/grep for sessions-index.json?
+- [ ] Does my code handle malformed data gracefully?
+- [ ] Is performance acceptable for large sessions?
+- [ ] Have I tested edge cases?

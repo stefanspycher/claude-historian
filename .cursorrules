@@ -1,0 +1,484 @@
+# Claude Session Historian - Cursor Rules
+
+## Project Overview
+
+This is the **Claude Session Historian** - a production-ready web application for visualizing and analyzing Claude Code conversation sessions. The application parses JSONL session files from `~/.claude/projects/` and provides interactive viewing, filtering, search, and export capabilities.
+
+**Status**: Fully implemented and production-ready  
+**Architecture**: Modular, event-driven, component-based  
+**Tech Stack**: Vanilla JavaScript (ES6 modules), Python 3, HTML5, CSS3
+
+---
+
+## Quick Reference
+
+### Application Location
+- **Frontend**: `app/js/` (32 modules, ~2,600 lines)
+- **Backend**: `app/server/` (12 Python modules, ~400 lines)
+- **Styles**: `app/css/` (5 modular stylesheets)
+- **Documentation**: `app/*.md` (8 comprehensive docs)
+
+### Key Directories
+```
+app/
+├── js/
+│   ├── core/           # EventBus, StateManager, Component, Module
+│   ├── config/         # Events, constants, node types
+│   ├── data/           # API, Parser, Transformer, SubAgentLoader
+│   ├── components/     # TreeView, DetailPanel, StatsBar, Toolbar
+│   ├── features/       # SessionSelector, Export, Search, Filters
+│   ├── services/       # Storage, Config, Icons
+│   └── utils/          # date, dom, sanitize
+├── server/
+│   ├── routes/         # API endpoints
+│   └── utils/          # Security, JSONL, discovery
+└── css/                # Modular stylesheets
+```
+
+---
+
+## Comprehensive Rules Location
+
+**IMPORTANT**: This project has extensive, detailed rules in `.cursor/rules/`. Always consult these files before making changes.
+
+### Rule Files
+
+#### 1. `.cursor/rules/README.md` - **START HERE**
+- Overview of all rule files
+- Usage guidelines (when to read which file)
+- Critical rules summary
+- Quick reference patterns
+- Common workflows
+
+#### 2. `.cursor/rules/session-development.mdc`
+**Read when working with**:
+- Session file parsing (JSONL format)
+- Event types (user, assistant, summary)
+- Sub-agent detection and loading
+- sessions-index.json handling (CRITICAL: use jq/grep, never Read tool)
+- JSONL → UI data transformation
+
+**Key Topics**:
+- Claude session file structure
+- Event schemas and content blocks
+- Tool use/result pairing
+- Sub-agent delegation patterns
+- Error handling for malformed data
+
+#### 3. `.cursor/rules/data-model.mdc`
+**Read when working with**:
+- UI data structures
+- Node types (user, assistant, tool_call, subagent)
+- Hierarchical relationships
+- Tree transformation logic
+- Data validation
+
+**Key Topics**:
+- Root session object structure
+- Node type definitions and examples
+- Parent-child relationship rules
+- JSONL → Tree transformation
+- Complete example structures
+
+#### 4. `.cursor/rules/modular-architecture.mdc`
+**Read when**:
+- Adding new features or modules
+- Understanding communication patterns
+- Following architectural principles
+- Extending components or services
+
+**Key Topics**:
+- Core principles (Single Responsibility, Loose Coupling, DI)
+- Module categories and organization
+- EventBus communication patterns
+- StateManager usage
+- Base class patterns (Component, Module)
+- File structure and naming conventions
+- Anti-patterns to avoid
+- Testing and security guidelines
+
+#### 5. `.cursor/rules/implementation-guide.mdc`
+**Read when**:
+- Looking for specific module reference
+- Adding components, services, or API endpoints
+- Debugging issues
+- Understanding state/events
+
+**Key Topics**:
+- Complete module reference (44 modules)
+- State structure definition
+- Event catalog (20+ events)
+- Common tasks with step-by-step guides
+- Debugging techniques
+- Testing procedures
+- Best practices
+
+#### 6. `.cursor/rules/claude-code-internals.mdc`
+**Read when**:
+- Understanding Claude Code session storage
+- Working with internal file formats
+- Analyzing session metadata
+
+**Key Topics**:
+- Storage architecture (`~/.claude/projects/`)
+- JSONL message format details
+- Built-in tools reference
+- Sub-agent architecture
+- Message threading and hierarchy
+
+---
+
+## Critical Rules
+
+### ❌ NEVER Do This
+
+1. **Don't read sessions-index.json with Read tool** - It can exceed 25,000 tokens. Use jq/grep/Shell commands instead
+2. **Don't call modules directly** - Always use EventBus for communication
+3. **Don't mutate state directly** - Use StateManager.set()
+4. **Don't create modules without base classes** - Extend Component or Module
+5. **Don't use string literals for events** - Use Events constants from `config/events.js`
+6. **Don't modify core modules** - They're the foundation, rarely need changes
+7. **Don't modify `assets/session-viewer_MOCK.jsx`** - It's the golden standard reference
+
+### ✅ ALWAYS Do This
+
+1. **Use EventBus for communication** - Keeps modules decoupled
+2. **Use StateManager for shared state** - Single source of truth
+3. **Extend base classes** - Component for UI, Module for logic
+4. **Use event constants** - From `config/events.js`
+5. **Handle errors gracefully** - Emit APP_ERROR event
+6. **Clean up resources** - Base classes handle automatically
+7. **Document public APIs** - JSDoc comments
+8. **Consult `.cursor/rules/` before implementing** - Comprehensive guidelines available
+
+---
+
+## Communication Patterns
+
+### Pattern: User Action → State Update → UI React
+
+```javascript
+// 1. User clicks button
+button.addEventListener('click', () => {
+  eventBus.emit(Events.NODE_SELECT, { nodeId: 'msg-1' });
+});
+
+// 2. Handler updates state
+eventBus.on(Events.NODE_SELECT, ({ nodeId }) => {
+  state.set('ui.selectedNodeId', nodeId);
+});
+
+// 3. UI reacts to state change
+class DetailPanel extends Component {
+  bindEvents() {
+    this.watchState('ui.selectedNodeId', ({ value }) => {
+      this.render(value);
+    });
+  }
+}
+```
+
+### Pattern: Module Communication (Event-Driven)
+
+```javascript
+// Module A: Emits event
+class SearchEngine extends Module {
+  search(query) {
+    const results = this.performSearch(query);
+    this.emit(Events.SEARCH_RESULTS, { results });
+  }
+}
+
+// Module B: Receives event
+class TreeView extends Component {
+  bindEvents() {
+    this.subscribe(Events.SEARCH_RESULTS, ({ results }) => {
+      this.highlightResults(results);
+    });
+  }
+}
+```
+
+---
+
+## Quick Task Guides
+
+### Adding a New Component
+
+1. Create file: `js/components/MyComponent/MyComponent.js`
+2. Extend Component base class
+3. Implement: `init()`, `bindEvents()`, `render()`
+4. Register in `main.js`
+5. Test in browser
+6. Update `MODULE_MAP.md`
+
+**See**: `.cursor/rules/implementation-guide.mdc` → "Adding a New Component"
+
+### Adding a New API Endpoint
+
+1. Backend: Create `server/routes/myroute.py`
+2. Register in `server/handler.py` ROUTES
+3. Frontend: Add method to `APIClient.js`
+4. Test with curl
+5. Document in `MODULE_MAP.md`
+
+**See**: `.cursor/rules/implementation-guide.mdc` → "Adding a New API Endpoint"
+
+### Modifying Session Parsing
+
+1. Read `.cursor/rules/session-development.mdc` → Event schemas
+2. Read `.cursor/rules/data-model.mdc` → Data structures
+3. Modify `SessionParser.js` or `TreeTransformer.js`
+4. Test with real session files
+5. Update tests
+
+**See**: `.cursor/rules/session-development.mdc` → "Parsing Best Practices"
+
+---
+
+## State Structure
+
+```javascript
+{
+  app: {
+    view: 'selector' | 'viewer',
+    loading: boolean,
+    error: Error | null
+  },
+  
+  session: {
+    id: string,
+    timestamp: string,
+    model: string,
+    rootMessages: Node[]
+  } | null,
+  
+  ui: {
+    expandedNodes: string[],
+    selectedNodeId: string | null,
+    showThinking: boolean,
+    filterType: 'all' | 'user' | 'assistant' | 'tool_call' | 'subagent',
+    searchQuery: string
+  },
+  
+  projects: Project[],
+  sessions: Session[],
+  recentSessions: RecentSession[]
+}
+```
+
+---
+
+## Event Catalog (Subset)
+
+### Session Lifecycle
+- `session:select` - User selected session
+- `session:loading` - Loading started
+- `session:loaded` - Session loaded
+- `session:error` - Loading failed
+- `session:close` - Close session
+
+### Tree Interactions
+- `node:select` - Node selected
+- `node:toggle` - Expand/collapse
+- `tree:expandAll` - Expand all
+- `tree:collapseAll` - Collapse all
+
+### Filters & Search
+- `filter:change` - Type filter changed
+- `search:change` - Search query changed
+- `thinking:toggle` - Toggle thinking visibility
+
+**See**: `.cursor/rules/implementation-guide.mdc` → "Event Catalog" for complete list
+
+---
+
+## Session File Format (Quick Reference)
+
+### JSONL Structure
+```jsonl
+{"type": "user", "timestamp": "2026-01-17T20:31:59.197Z", "message": {...}}
+{"type": "assistant", "timestamp": "2026-01-17T20:32:01.123Z", "message": {...}}
+```
+
+### Event Types
+- **user** - User message (can contain tool_result blocks)
+- **assistant** - Claude response (can contain text, thinking, tool_use blocks)
+- **summary** - Session summary
+
+### Content Block Types
+- `text` - Plain text
+- `thinking` - Extended thinking (optional signature)
+- `tool_use` - Tool invocation (id, name, input)
+- `tool_result` - Tool result (tool_use_id, content, is_error)
+
+### Sub-Agent Detection
+Pattern: `agentId:\s*([a-zA-Z0-9]+)` in tool result content  
+Location: `<session-id>/subagents/agent-<agent-id>.jsonl`
+
+**See**: `.cursor/rules/session-development.mdc` for complete details
+
+---
+
+## Testing
+
+### Run Module Tests
+```bash
+cd app
+./start.sh
+open http://localhost:8000/test.html
+```
+
+### Test API Endpoints
+```bash
+curl http://localhost:8000/api/health
+curl http://localhost:8000/api/projects
+curl "http://localhost:8000/api/sessions?project=my-project"
+```
+
+### Manual Testing
+See `app/TESTING.md` for comprehensive checklist
+
+---
+
+## Documentation Structure
+
+### For Users
+- `app/README.md` - Project overview
+- `app/QUICKSTART.md` - 5-minute getting started
+- `app/USAGE.md` - User guide
+
+### For Developers
+- `app/ARCHITECTURE.md` - Technical design
+- `app/MODULE_MAP.md` - Module reference
+- `app/DEVELOPER_GUIDE.md` - Development guide
+- `app/IMPLEMENTATION_SUMMARY.md` - Build summary
+- `app/COMPLETION_REPORT.md` - Final report
+
+### For AI Assistants (YOU!)
+- `.cursor/rules/README.md` - **Start here**
+- `.cursor/rules/session-development.mdc` - Session parsing
+- `.cursor/rules/data-model.mdc` - Data structures
+- `.cursor/rules/modular-architecture.mdc` - Architecture patterns
+- `.cursor/rules/implementation-guide.mdc` - Module reference
+- `.cursor/rules/claude-code-internals.mdc` - Internal workings
+
+### Reference Specs
+- `references/session-format.md` - JSONL format details
+- `references/event-schema.md` - Event type schemas
+- `references/subagent-detection.md` - Sub-agent patterns
+- `references/session-discovery.md` - Finding sessions
+- `references/export-formats.md` - Export specifications
+
+---
+
+## Development Workflow
+
+### When Starting a Task
+
+1. **Read** `.cursor/rules/README.md` → Understand rule organization
+2. **Identify** which rule file(s) are relevant to your task
+3. **Read** the relevant rule file(s) thoroughly
+4. **Check** existing implementation in `app/` directory
+5. **Implement** following the documented patterns
+6. **Test** with real data
+7. **Document** changes in appropriate files
+
+### Before Making Changes
+
+**Ask yourself**:
+- [ ] Have I read the relevant `.cursor/rules/*.mdc` files?
+- [ ] Do I understand the module hierarchy and dependencies?
+- [ ] Am I following the event-driven communication pattern?
+- [ ] Am I using StateManager for shared state?
+- [ ] Am I extending the appropriate base class?
+- [ ] Have I checked for existing similar implementations?
+- [ ] Will my changes maintain architectural consistency?
+
+---
+
+## Key Principles
+
+1. **Single Responsibility** - Each module has ONE clear purpose
+2. **Loose Coupling** - Modules communicate via EventBus, never directly
+3. **Centralized State** - All shared state in StateManager
+4. **Dependency Injection** - Dependencies passed in, not hardcoded
+5. **Automatic Cleanup** - Base classes handle resource cleanup
+6. **Progressive Disclosure** - Load metadata first, full content on demand
+7. **Graceful Degradation** - Handle missing data and errors gracefully
+8. **Performance Focus** - Stream large sessions, lazy load sub-agents
+
+---
+
+## Security Rules
+
+### XSS Prevention
+```javascript
+import { escapeHtml } from './utils/sanitize.js';
+
+// Always escape user content
+const safeContent = escapeHtml(userInput);
+element.textContent = safeContent;  // Use textContent, not innerHTML
+```
+
+### Path Validation (Backend)
+```python
+from server.utils.security import is_safe_path
+
+# Only allow access to ~/.claude/ directory
+if not is_safe_path(path):
+    handler.send_error_json(403, "Invalid path")
+```
+
+---
+
+## Performance Guidelines
+
+- **Debounce** search input (300ms)
+- **Lazy load** sub-agents (only when expanded)
+- **Stream** large sessions (don't load all into memory)
+- **Efficient rendering** (update only changed nodes)
+- **Memory management** (clear old data when loading new session)
+
+---
+
+## Getting Help
+
+### For Implementation Questions
+1. Check `.cursor/rules/implementation-guide.mdc` → Module reference
+2. Check `app/MODULE_MAP.md` → Module catalog
+3. Check existing similar modules in `app/js/`
+4. Check browser console for errors
+
+### For Architecture Questions
+1. Check `.cursor/rules/modular-architecture.mdc` → Patterns
+2. Check `app/ARCHITECTURE.md` → Design decisions
+3. Check base classes: `Component.js`, `Module.js`
+
+### For Session Format Questions
+1. Check `.cursor/rules/session-development.mdc` → Format details
+2. Check `.cursor/rules/data-model.mdc` → Data structures
+3. Check `references/session-format.md` → Complete spec
+4. Check `references/event-schema.md` → Type definitions
+
+---
+
+## Summary
+
+This project is **production-ready** with:
+- ✅ Complete implementation (63 files)
+- ✅ Modular architecture (event-driven, component-based)
+- ✅ Comprehensive documentation (8 app docs + 6 rule files)
+- ✅ Tested and validated
+- ✅ Security best practices
+- ✅ Performance optimized
+
+**Always consult `.cursor/rules/` before implementing changes!**
+
+The rules are comprehensive, up-to-date, and designed to maintain code quality and architectural integrity.
+
+---
+
+**Last Updated**: January 19, 2026  
+**Version**: 1.0.0  
+**Status**: Production Ready

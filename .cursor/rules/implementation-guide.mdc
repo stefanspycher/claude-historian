@@ -1,0 +1,535 @@
+# Implementation Guide
+
+## Application Status
+
+The Claude Session Viewer is **fully implemented** and production-ready.
+
+**Location**: `app/` directory  
+**Status**: Complete (all 8 phases finished)  
+**Files**: 63 total (32 JS, 12 Python, 5 CSS, 8 docs, 6 other)
+
+## Quick Start
+
+```bash
+cd app
+./start.sh
+# Open http://localhost:8000/index.html
+```
+
+## Module Reference
+
+### Core Infrastructure (4 modules)
+
+**EventBus** (`js/core/EventBus.js`)
+- Pub/sub event system
+- Methods: `on()`, `once()`, `off()`, `emit()`, `clear()`
+- Singleton: `eventBus`
+
+**StateManager** (`js/core/StateManager.js`)
+- Immutable state management
+- Methods: `get()`, `set()`, `batch()`, `subscribe()`
+- Singleton: `state`
+
+**Component** (`js/core/Component.js`)
+- Base class for UI components
+- Lifecycle: `init()`, `bindEvents()`, `render()`, `destroy()`
+- Helpers: `createElement()`, `subscribe()`, `watchState()`
+
+**Module** (`js/core/Module.js`)
+- Base class for logic modules
+- Methods: `init()`, `subscribe()`, `emit()`, `getState()`, `setState()`
+
+### Configuration (3 modules)
+
+**Events** (`js/config/events.js`)
+- Event name constants
+- Example: `Events.SESSION_LOADED = 'session:loaded'`
+
+**Constants** (`js/config/constants.js`)
+- App configuration
+- Example: `APP_CONFIG.API_URL`, `APP_CONFIG.MAX_DEPTH`
+
+**Node Types** (`js/config/nodeTypes.js`)
+- Node type definitions
+- Exports: `NODE_TYPES`, `NODE_CONFIG`, `STATUS_CONFIG`
+
+### Data Layer (5 modules)
+
+**APIClient** (`js/data/APIClient.js`)
+- HTTP client for backend
+- Methods: `listProjects()`, `listSessions()`, `loadSession()`, `loadSubAgent()`
+- Error handling: Throws `APIError` with status code
+
+**SessionParser** (`js/data/SessionParser.js`)
+- Parses JSONL events into structured data
+- Methods: `parseEvents(events)`
+- Handles: User events, assistant events, tool uses, tool results
+
+**TreeTransformer** (`js/data/TreeTransformer.js`)
+- Transforms flat events into hierarchical tree
+- Methods: `transform(parsedEvents, metadata)`
+- Creates: User → Assistant → Tool Call hierarchy
+
+**SubAgentLoader** (`js/data/SubAgentLoader.js`)
+- Loads sub-agent sessions recursively
+- Methods: `loadSubAgents(tree, project, sessionId, depth)`
+- Detects: `agentId:` pattern in tool results
+
+**NodeFactory** (`js/data/NodeFactory.js`)
+- Creates typed nodes
+- Methods: `createUserNode()`, `createAssistantNode()`, `createToolNode()`, `createSubAgentNode()`
+
+### UI Components (7+ modules)
+
+**TreeView** (`js/components/TreeView/TreeView.js`)
+- Renders hierarchical tree
+- Features: Expand/collapse, selection, connection lines
+- Events: Emits `node:select`, `node:toggle`
+
+**DetailPanel** (`js/components/DetailPanel/DetailPanel.js`)
+- Displays node details
+- Sections: Metadata, thinking, content, tool I/O, errors
+- Reacts to: `ui.selectedNodeId` state changes
+
+**StatsBar** (`js/components/StatsBar/StatsBar.js`)
+- Shows session statistics
+- Metrics: Total nodes, tool calls, sub-agents, errors, max depth, tool time
+
+**Toolbar** (`js/components/Toolbar/Toolbar.js`)
+- User controls
+- Controls: Filter, thinking toggle, expand/collapse all, search
+
+**SessionHeader** (`js/components/common/SessionHeader.js`)
+- Displays session metadata
+- Shows: Session ID, model, timestamp
+
+**Toast** (`js/components/common/Toast.js`)
+- Toast notifications
+- Types: info, success, error
+- Auto-hide after duration
+
+**LoadingSpinner** (`js/components/common/LoadingSpinner.js`)
+- Loading overlay
+- Controlled by: `app.loading` state
+
+### Features (7 modules)
+
+**SessionSelector** (`js/features/SessionSelector/SessionSelector.js`)
+- Project and session browsing
+- Features: Project dropdown, session list, recent sessions
+
+**ExportManager** (`js/features/Export/ExportManager.js`)
+- Export coordinator
+- Formats: Markdown, HTML
+- Delegates to: `MarkdownExporter`, `HTMLExporter`
+
+**MarkdownExporter** (`js/features/Export/exporters/MarkdownExporter.js`)
+- Generates markdown
+- Options: Include/exclude thinking blocks
+
+**HTMLExporter** (`js/features/Export/exporters/HTMLExporter.js`)
+- Generates self-contained HTML
+- Includes: Inline CSS, escaped content
+
+**SearchEngine** (`js/features/Search/SearchEngine.js`)
+- Content search
+- Searches: Content, task, name, input, output
+
+**FilterManager** (`js/features/Filters/FilterManager.js`)
+- Type filtering
+- Types: all, user, assistant, tool_call, subagent
+
+### Services (3 modules)
+
+**StorageService** (`js/services/StorageService.js`)
+- localStorage wrapper
+- Methods: `addRecentSession()`, `getRecentSessions()`, `saveUIState()`, `getUIState()`
+
+**ConfigService** (`js/services/ConfigService.js`)
+- Configuration management
+- Methods: `get()`, `set()`, `getAll()`
+
+**IconService** (`js/services/IconService.js`)
+- SVG icon management
+- Methods: `getIcon()`, `createIcon()`
+- Icons: Inline SVG strings (no external dependencies)
+
+### Utilities (3 modules)
+
+**date.js** (`js/utils/date.js`)
+- Date formatting
+- Functions: `formatTimestamp()`, `formatTime()`, `formatDuration()`
+
+**dom.js** (`js/utils/dom.js`)
+- DOM helpers
+- Functions: `createElement()`, `clearElement()`, `toggleClass()`
+
+**sanitize.js** (`js/utils/sanitize.js`)
+- XSS prevention
+- Functions: `escapeHtml()`, `sanitizeContent()`
+
+### Backend (12 modules)
+
+**serve.py** (`app/serve.py`)
+- Entry point
+- Starts HTTP server on port 8000
+
+**handler.py** (`app/server/handler.py`)
+- Request router
+- Routes API requests to handlers
+- CORS headers configured
+
+**API Routes** (`app/server/routes/`)
+- `projects.py` - `/api/projects` - List projects
+- `sessions.py` - `/api/sessions?project=X` - List sessions
+- `session.py` - `/api/session?project=X&session=Y` - Load session
+- `subagent.py` - `/api/subagent?project=X&session=Y&agent=Z` - Load sub-agent
+
+**Backend Utilities** (`app/server/utils/`)
+- `security.py` - Path validation (prevents directory traversal)
+- `jsonl.py` - JSONL file loading (handles malformed lines)
+- `discovery.py` - Session discovery (jq + fallback)
+
+## State Structure
+
+```javascript
+{
+  app: {
+    view: 'selector' | 'viewer',
+    loading: boolean,
+    error: Error | null
+  },
+  
+  session: {
+    id: string,
+    timestamp: string,
+    model: string,
+    rootMessages: Node[]
+  } | null,
+  
+  ui: {
+    expandedNodes: string[],
+    selectedNodeId: string | null,
+    showThinking: boolean,
+    filterType: 'all' | 'user' | 'assistant' | 'tool_call' | 'subagent',
+    searchQuery: string
+  },
+  
+  projects: Project[],
+  sessions: Session[],
+  recentSessions: RecentSession[]
+}
+```
+
+## Event Catalog
+
+### App Lifecycle
+- `app:ready` - App initialized
+- `app:error` - Global error
+
+### Navigation
+- `view:change` - Switch selector/viewer
+
+### Session Discovery
+- `projects:load` - Request projects
+- `projects:loaded` - Projects received
+- `sessions:load` - Request sessions
+- `sessions:loaded` - Sessions received
+
+### Session Loading
+- `session:select` - User selected session
+- `session:loading` - Loading started
+- `session:loaded` - Session loaded
+- `session:error` - Loading failed
+- `session:close` - Close session
+
+### Tree Interactions
+- `node:select` - Node selected
+- `node:toggle` - Expand/collapse
+- `tree:expandAll` - Expand all
+- `tree:collapseAll` - Collapse all
+
+### Filters & Search
+- `filter:change` - Type filter changed
+- `search:change` - Search query changed
+- `thinking:toggle` - Toggle thinking visibility
+
+### Export
+- `export:start` - Export initiated
+- `export:complete` - Export finished
+- `export:error` - Export failed
+
+### Notifications
+- `toast:show` - Show toast
+- `recent:updated` - Recent sessions updated
+
+## Common Tasks
+
+### Reading a File
+```javascript
+// Use Read tool, not cat/head/tail
+// Example: Read session parser
+```
+
+### Adding a New Component
+
+1. Create file: `js/components/MyComponent/MyComponent.js`
+2. Extend Component:
+```javascript
+import { Component } from '../../core/Component.js';
+import { Events } from '../../config/events.js';
+
+export class MyComponent extends Component {
+  init() {
+    this.bindEvents();
+  }
+
+  bindEvents() {
+    this.subscribe(Events.SOME_EVENT, this.handleEvent);
+    this.watchState('some.path', this.handleState);
+  }
+
+  render() {
+    // Render logic
+  }
+
+  handleEvent = ({ data }) => {
+    this.render();
+  };
+
+  handleState = ({ value }) => {
+    this.render();
+  };
+}
+```
+
+3. Register in `main.js`:
+```javascript
+import { MyComponent } from './components/MyComponent/MyComponent.js';
+
+// In initUI()
+this.modules.myComponent = new MyComponent('#my-container');
+```
+
+### Adding a New Service
+
+1. Create file: `js/services/MyService.js`
+2. Extend Module:
+```javascript
+import { Module } from '../core/Module.js';
+
+export class MyService extends Module {
+  init() {
+    this.data = new Map();
+  }
+
+  doSomething(params) {
+    // Logic here
+  }
+}
+```
+
+3. Register in `main.js`:
+```javascript
+// In initServices()
+this.modules.myService = new MyService();
+```
+
+### Adding a New API Endpoint
+
+1. Backend - Create `server/routes/myroute.py`:
+```python
+def handle(handler, params):
+    """Handle my route."""
+    result = process(params)
+    handler.send_json({'result': result})
+```
+
+2. Register in `server/handler.py`:
+```python
+from .routes import myroute
+
+ROUTES = {
+    # ... existing
+    'myroute': myroute.handle
+}
+```
+
+3. Frontend - Add to `APIClient.js`:
+```javascript
+async myRoute(params) {
+  const query = new URLSearchParams(params);
+  return this.request(`/api/myroute?${query}`);
+}
+```
+
+### Adding a New Exporter
+
+1. Create `js/features/Export/exporters/MyExporter.js`:
+```javascript
+export class MyExporter {
+  constructor() {
+    this.mimeType = 'text/my-format';
+  }
+
+  export(session, options = {}) {
+    // Generate content
+    return content;
+  }
+}
+```
+
+2. Register in `ExportManager.js`:
+```javascript
+import { MyExporter } from './exporters/MyExporter.js';
+
+this.exporters = {
+  // ... existing
+  myformat: new MyExporter()
+};
+```
+
+## Debugging
+
+### Enable Verbose Logging
+
+In browser console:
+```javascript
+// Log all events
+window.eventBus.on('*', (event, data) => {
+  console.log(`[Event] ${event}:`, data);
+});
+
+// Inspect state
+console.log(window.state.state);
+
+// Check modules
+console.log(window.app.modules);
+```
+
+### Common Issues
+
+**Module not loading**
+- Check import path
+- Check for syntax errors in browser console
+- Verify export statement
+
+**Events not firing**
+- Check event name matches constant
+- Verify subscription before emit
+- Check handler isn't throwing
+
+**State not updating**
+- Check path is correct: `'session.id'` not `'session/id'`
+- Use `setState()` not direct mutation
+- Check for typos
+
+**Component not rendering**
+- Check container exists
+- Verify `render()` is called
+- Check for errors in render method
+
+## Testing
+
+### Run Module Tests
+```bash
+open http://localhost:8000/test.html
+```
+
+Expected: All green checkmarks
+
+### Test API Endpoints
+```bash
+# Health check
+curl http://localhost:8000/api/health
+
+# List projects
+curl http://localhost:8000/api/projects
+
+# List sessions
+curl "http://localhost:8000/api/sessions?project=my-project"
+```
+
+### Manual Testing Checklist
+
+See `app/TESTING.md` for comprehensive checklist.
+
+## Documentation Files
+
+- `app/README.md` - Project overview
+- `app/QUICKSTART.md` - 5-minute guide
+- `app/USAGE.md` - User guide
+- `app/ARCHITECTURE.md` - Technical design
+- `app/MODULE_MAP.md` - Module reference
+- `app/DEVELOPER_GUIDE.md` - Development guide
+- `app/TESTING.md` - Test checklist
+- `app/IMPLEMENTATION_SUMMARY.md` - Build summary
+- `app/COMPLETION_REPORT.md` - Final report
+
+## Key Implementation Details
+
+### JSONL Parsing
+- Skip malformed lines (don't fail entire session)
+- Handle both string and array content
+- Extract thinking blocks from content array
+- Match tool uses with tool results by ID
+
+### Tree Building
+- User messages are root nodes
+- Assistant responses are children of user messages
+- Tool calls are children of assistant messages
+- Sub-agents are children of tool calls (when delegation occurs)
+
+### Sub-Agent Detection
+- Pattern: `agentId: <id>` in tool result content
+- File location: `<session-id>/subagents/agent-<id>.jsonl`
+- Load recursively (max depth 10)
+- Detect mode from context (Plan, Debug, Ask)
+
+### Session Discovery
+- Primary: Use `jq` on `sessions-index.json`
+- Fallback: Directory listing with `ls -lt`
+- Never load full sessions-index.json into memory (can be 25,000+ tokens)
+
+### Security
+- Backend: Path validation (only `~/.claude/` accessible)
+- Frontend: XSS prevention (use `escapeHtml()`, `textContent`)
+- CORS: Headers configured in backend
+
+### Performance
+- Debounced search (300ms)
+- Lazy sub-agent loading
+- Efficient tree flattening
+- Minimal re-renders (state-driven)
+
+## Extension Points
+
+The architecture is designed for easy extension:
+
+1. **New node types**: Add to config, factory, parser, transformer, UI
+2. **New exporters**: Implement interface, register in ExportManager
+3. **New components**: Extend Component, register in main.js
+4. **New services**: Extend Module, register in main.js
+5. **New API endpoints**: Add route handler, register in handler.py
+
+## Best Practices
+
+1. **Always use event constants** from `Events`
+2. **Never call modules directly** - use EventBus
+3. **Update state through StateManager** - never mutate directly
+4. **Extend base classes** - Component or Module
+5. **Handle errors gracefully** - emit APP_ERROR event
+6. **Clean up resources** - base classes handle this automatically
+7. **Document public APIs** - JSDoc comments
+8. **Test in isolation** - mock dependencies
+
+## Summary
+
+The implementation is:
+- ✅ Complete (all features implemented)
+- ✅ Modular (63 files, clear separation)
+- ✅ Tested (test.html + manual testing)
+- ✅ Documented (8 documentation files)
+- ✅ Production-ready (error handling, security, performance)
+
+Use this guide when extending or modifying the application!
